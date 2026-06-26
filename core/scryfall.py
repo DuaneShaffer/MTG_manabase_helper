@@ -13,6 +13,7 @@ Scryfall request etiquette is followed: a descriptive User-Agent, an Accept
 header, and a small delay between requests.
 """
 
+import datetime
 import time
 from pathlib import Path
 
@@ -30,6 +31,15 @@ _LANDS_TTL = 7 * 24 * 3600     # re-fetch the land list weekly
 _COLLECTION_CHUNK = 75         # max identifiers per /cards/collection request
 
 STANDARD_LANDS_QUERY = "legal:standard type:land"
+
+
+def legality_cutoff():
+    """Scryfall search clause limiting results to printings released on/before
+    today. Scryfall marks spoiled-but-unreleased sets (e.g. a future set that
+    reprints Standard staples) as ``legal:standard`` ahead of release, and the
+    best-printing sort would then surface that not-yet-released printing. Pinning
+    to today keeps the snapshot to what is actually available now."""
+    return "date<=" + datetime.date.today().isoformat()
 
 
 # --------------------------------------------------------------------------
@@ -105,7 +115,7 @@ def standard_lands(force_refresh=False):
         if cached is not None:
             _lands_mem = cached
             return _lands_mem
-    lands = _search_all(STANDARD_LANDS_QUERY, unique="cards")
+    lands = _search_all(STANDARD_LANDS_QUERY + " " + legality_cutoff(), unique="cards")
     _write_cache("standard_lands", lands)
     _lands_mem = lands
     return _lands_mem

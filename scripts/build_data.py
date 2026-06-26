@@ -169,7 +169,7 @@ def main():
     with open(OUT / "lands.json", "w") as fh:
         json.dump(lands, fh, separators=(",", ":"))
 
-    all_cards = scryfall._search_all("legal:standard", unique="cards")
+    all_cards = scryfall._search_all("legal:standard " + scryfall.legality_cutoff(), unique="cards")
     cards = {c["name"].lower(): slim_card(c) for c in all_cards}
     with open(OUT / "cards.json", "w") as fh:
         json.dump(cards, fh, separators=(",", ":"))
