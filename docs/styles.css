@@ -216,12 +216,43 @@ section.deck-input, section.dashboard, section.tools {
 .sim-pill[data-g="D"] { border-color: var(--grade-D); } .sim-pill[data-g="D"] .sp-p { color: var(--grade-D); }
 .sim-pill[data-g="F"] { border-color: var(--grade-F); } .sim-pill[data-g="F"] .sp-p { color: var(--grade-F); }
 
-/* draw / ramp tag (top-right) — flags cards that lower the land count */
+/* draw / ramp tag (top-right) — flags cards that lower the land count; click to tweak */
 .smooth-tag {
   position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%;
-  display: grid; place-items: center; font-size: 12px; line-height: 1; cursor: default;
+  display: grid; place-items: center; font-size: 12px; line-height: 1; cursor: pointer;
   background: rgba(201,162,39,.92); color: #1c1503; border: 1px solid rgba(0,0,0,.35);
+  transition: transform .1s, box-shadow .12s;
 }
+.smooth-tag:hover { transform: scale(1.12); box-shadow: 0 0 10px 1px rgba(201,162,39,.6); }
+
+/* recommended-land-count row in the panel */
+.rec-target-row { display: flex; justify-content: space-between; align-items: center;
+  margin-top: 8px; font-size: 13px; color: var(--ink-dim); letter-spacing: .04em; }
+.rec-target-row[hidden] { display: none; }
+.rec-target-num { font-family: var(--font-display); font-size: 18px; color: var(--gold-soft); font-variant-numeric: tabular-nums; }
+.why-note { font-size: 12px; color: var(--ink); line-height: 1.5; margin: 8px 0 0;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 9px 11px; }
+.why-note[hidden] { display: none; }
+
+/* tweak popover for draw/ramp cards */
+.smooth-pop {
+  position: fixed; z-index: 60; width: 210px; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--gold); border-radius: var(--radius-sm); box-shadow: var(--shadow); padding: 12px;
+  font-size: 12px;
+}
+.smooth-pop[hidden] { display: none; }
+.smooth-pop .sp-title { font-family: var(--font-display); color: var(--parchment); font-size: 13px; margin-bottom: 8px; }
+.smooth-pop .sp-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.smooth-pop .sp-stepper { display: flex; align-items: center; gap: 6px; }
+.smooth-pop .sp-stepper .step-n, .smooth-pop #smoothCountVal { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--parchment); min-width: 16px; text-align: center; }
+.smooth-pop .sp-of { color: var(--ink-dim); margin-top: 7px; }
+
+/* floating card preview on recommendation hover */
+.card-preview { position: fixed; z-index: 70; pointer-events: none; width: 240px; border-radius: 12px;
+  overflow: hidden; box-shadow: 0 14px 40px -8px rgba(0,0,0,.8); }
+.card-preview[hidden] { display: none; }
+.card-preview img { width: 100%; display: block; }
+.rec-row .rn { cursor: help; }
 
 /* ---------- buttons ---------- */
 .btn {

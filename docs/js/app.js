@@ -27,7 +27,19 @@ const state = {
   spellCells: new Map(),
   lastRec: null,
   lastImportedDeck: null,  // deck text whose lands were loaded into the build
+  avgMV: 3,
+  smoothCards: [],     // [{name, qty}] cheap draw/ramp cards in the deck
+  smoothOverrides: {}, // name -> copies counted toward draw/ramp stats
+  conditionsPresent: new Set(),  // condition keywords across the land pool
+  conditionsActive: new Set(),   // conditions the loaded deck satisfies
 };
+
+const COND_THRESHOLD = 6;  // a conditional land "turns on" at this many matching deck cards
+
+function smoothCount() {
+  return state.smoothCards.reduce(
+    (s, c) => s + (state.smoothOverrides[c.name] ?? c.qty), 0);
+}
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
@@ -277,6 +289,96 @@ function syncCountsToTiles() {
   }
 }
 
+/* ---------- conditional fixing (Avengers Tower etc.) ---------- */
+function applyConditions(cards, qtyByName) {
+  const counts = {};
+  for (const cond of state.conditionsPresent) counts[cond] = 0;
+  for (const c of cards) {
+    if (isLandType(c.type)) continue;
+    const t = (c.type || "").toLowerCase();
+    const q = qtyByName[c.name] || 0;
+    for (const cond of state.conditionsPresent) if (t.includes(cond)) counts[cond] += q;
+  }
+  state.conditionsActive = new Set(
+    [...state.conditionsPresent].filter((cond) => counts[cond] >= COND_THRESHOLD));
+  // Set each conditional land's effective colors and refresh its tile.
+  for (const land of state.lands) {
+    if (!land.condition) continue;
+    const eff = state.conditionsActive.has(land.condition) ? (land.condColors || []) : land.baseColors;
+    if ((land.colors || []).join() !== eff.join()) {
+      land.colors = eff.slice();
+      refreshTileDots(land);
+    }
+  }
+}
+
+function refreshTileDots(land) {
+  const entry = state.tiles.get(land.name);
+  if (!entry) return;
+  const dots = entry.el.querySelector(".colors-dot");
+  if (!dots) return;
+  dots.innerHTML = "";
+  for (const c of land.colors) { const i = el("i"); i.dataset.c = c; dots.appendChild(i); }
+}
+
+/* ---------- recommended-land panel ---------- */
+function updateLandPanel() {
+  const row = $("#recTargetRow");
+  if (!state.landTarget) { row.hidden = true; return; }
+  row.hidden = false;
+  $("#recTarget").textContent = "~" + state.landTarget;
+  const base = recommendLandCount(state.avgMV, state.deckSize, 0);
+  const delta = base - state.landTarget;
+  const sc = smoothCount();
+  let why = `Karsten's curve for an average mana value of ${state.avgMV.toFixed(1)}`;
+  if (sc && delta > 0) why += `, minus ~${delta} for ${sc} cheap draw/ramp card${sc === 1 ? "" : "s"} (↻)`;
+  why += `. Aggro leans to the low end, control to the high end.`;
+  $("#landWhyNote").textContent = why;
+}
+
+/* ---------- draw/ramp tweak popover ---------- */
+let _smoothPopName = null;
+function openSmoothPop(name, qty, anchorEl) {
+  _smoothPopName = name;
+  const pop = $("#smoothPop");
+  $("#smoothPopTitle").textContent = name;
+  $("#smoothCountVal").textContent = state.smoothOverrides[name] ?? qty;
+  $("#smoothOf").textContent = `of ${qty} cop${qty === 1 ? "y" : "ies"} count toward the land target & Simulate.`;
+  const r = anchorEl.getBoundingClientRect();
+  pop.style.left = Math.min(window.innerWidth - 224, Math.max(6, r.left - 100)) + "px";
+  pop.style.top = (r.bottom + 6) + "px";
+  pop.hidden = false;
+}
+function changeSmooth(delta) {
+  const card = state.smoothCards.find((c) => c.name === _smoothPopName);
+  if (!card) return;
+  const cur = state.smoothOverrides[card.name] ?? card.qty;
+  const next = Math.max(0, Math.min(card.qty, cur + delta));
+  state.smoothOverrides[card.name] = next;
+  $("#smoothCountVal").textContent = next;
+  state.landTarget = recommendLandCount(state.avgMV, state.deckSize, smoothCount());
+  updateLandPanel();
+}
+
+/* ---------- floating card preview ---------- */
+function showPreview(src, x, y) {
+  if (!src) return;
+  const cp = $("#cardPreview");
+  cp.querySelector("img").src = src;
+  cp.hidden = false;
+  positionPreview(x, y);
+}
+function positionPreview(x, y) {
+  const cp = $("#cardPreview");
+  const w = 240, h = 336;
+  let left = x + 18;
+  if (left + w > window.innerWidth) left = x - w - 18;
+  const top = Math.max(8, Math.min(window.innerHeight - h - 8, y - h / 2));
+  cp.style.left = left + "px";
+  cp.style.top = top + "px";
+}
+function hidePreview() { $("#cardPreview").hidden = true; }
+
 /* ---------- deck analysis (all local) ---------- */
 async function analyzeDeck() {
   const text = $("#deckText").value.trim();
@@ -309,19 +411,25 @@ async function analyzeDeck() {
     }
     const avg = state.deckCards.length
       ? state.deckCards.reduce((s, c) => s + c.mv, 0) / state.deckCards.length : 3;
-    // Count cheap card-draw / ramp / dig copies — they let you run fewer lands.
-    let smoothCount = 0;
-    for (const c of cards) {
-      if (c.smooth && !isLandType(c.type)) smoothCount += qtyByName[c.name] || 0;
-    }
-    state.smoothCount = smoothCount;
-    state.landTarget = recommendLandCount(avg, state.deckSize, smoothCount);
+    state.avgMV = avg;
+    const newDeck = text !== state.lastImportedDeck;
+
+    // Cheap draw/ramp cards (feed the land formula + sim); reset per-card overrides
+    // on a new deck.
+    state.smoothCards = cards
+      .filter((c) => c.smooth && !isLandType(c.type))
+      .map((c) => ({ name: c.name, qty: qtyByName[c.name] || 0 }));
+    if (newDeck) state.smoothOverrides = {};
+
+    // Conditional fixing: turn on lands whose spell-type condition the deck meets.
+    applyConditions(cards, qtyByName);
+
+    state.landTarget = recommendLandCount(avg, state.deckSize, smoothCount());
 
     // Load the deck's own lands into the build so the dashboard + grades reflect
-    // your actual manabase. Only when the deck text itself changes, so toggling
-    // confidence (which re-analyzes) doesn't wipe lands you've adjusted by hand.
+    // your actual manabase — only on a new deck (so confidence changes don't wipe edits).
     let loadedLands = 0, landsOutsidePool = 0;
-    if (text !== state.lastImportedDeck) {
+    if (newDeck) {
       state.lastImportedDeck = text;
       state.counts = {};
       for (const c of cards) {
@@ -337,8 +445,8 @@ async function analyzeDeck() {
     refreshDashboard();
     renderSpellStrip();
     markFixers();
-    // Default to showing only lands relevant to this deck once we know its colors.
     setLandMode(deckColors().size ? "relevant" : "all");
+    updateLandPanel();
     gradeBuild();
     $("#recommendBtn").disabled = false;
     $("#suggestToggle").disabled = false;
@@ -347,11 +455,13 @@ async function analyzeDeck() {
     const colors = COLORS.filter((c) => state.requirements[c] > 0).map((c) => COLOR_NAMES[c]);
     const parts = [colors.length ? `Needs ${colors.join(", ")} sources.` : "No colored requirements found."];
     if (loadedLands) parts.push(`Loaded ${loadedLands} lands from your deck.`);
-    if (smoothCount) {
+    const sc = smoothCount();
+    if (sc) {
       const delta = recommendLandCount(avg, state.deckSize, 0) - state.landTarget;
-      parts.push(`${smoothCount} draw/ramp cards (↻)` +
+      parts.push(`${sc} draw/ramp cards (↻)` +
         (delta > 0 ? ` trim ~${delta} land${delta === 1 ? "" : "s"} off the target.` : ` factored into the target.`));
     }
+    if (state.conditionsActive.size) parts.push(`Conditional lands active for: ${[...state.conditionsActive].join(", ")}.`);
     if (landsOutsidePool) parts.push(`${landsOutsidePool} land(s) not in the Standard pool.`);
     if (missing.length) parts.push(`${missing.length} card(s) not found.`);
     hint.className = "hint";
@@ -382,10 +492,11 @@ function renderSpellStrip() {
     simPill.hidden = true;
     simPill.innerHTML = `sim <span class="sp-p"></span>`;
     cell.append(ph, img, qty, badge, simPill);
-    if (spell.smooth) {                          // card draw / ramp — affects land count
-      const tag = el("div", "smooth-tag");
+    if (spell.smooth) {                          // card draw / ramp — affects land count + sim
+      const tag = el("button", "smooth-tag");
       tag.textContent = "↻";
-      tag.title = "Card draw / ramp — smooths your draws, so the recommended land count is a bit lower.";
+      tag.title = "Card draw / ramp — lowers the recommended land count and helps the simulation. Click to adjust how many copies count.";
+      tag.addEventListener("click", (e) => { e.stopPropagation(); openSmoothPop(spell.name, spell.qty, tag); });
       cell.appendChild(tag);
     }
     grid.appendChild(cell);
@@ -456,7 +567,7 @@ function runSimulation() {
       const c = state.counts[land.name] || 0;
       if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, count: c });
     }
-    const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000 });
+    const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount: smoothCount() });
     // Populate the simulated pill on each card — the static badge stays as-is, so
     // both numbers are visible side by side.
     for (const spell of state.spells) {
@@ -491,7 +602,7 @@ function recommend() {
     .sort((a, b) => b[1] - a[1])
     .map(([name, count]) => {
       const l = byName.get(name) || {};
-      return { name, count, colors: l.colors || [] };
+      return { name, count, colors: l.colors || [], img: l.image_hi || l.image || "" };
     });
   const list = $("#recList");
   list.innerHTML = "";
@@ -499,6 +610,11 @@ function recommend() {
     const row = el("div", "rec-row");
     const dots = p.colors.map((c) => `<i style="background:var(--${c})"></i>`).join("");
     row.innerHTML = `<span class="rc">${p.count}×</span><span class="rn">${p.name}</span><span class="rd">${dots}</span>`;
+    if (p.img) {
+      row.addEventListener("mouseenter", (e) => showPreview(p.img, e.clientX, e.clientY));
+      row.addEventListener("mousemove", (e) => positionPreview(e.clientX, e.clientY));
+      row.addEventListener("mouseleave", hidePreview);
+    }
     list.appendChild(row);
   }
   const short = Object.keys(rec.shortfall || {});
@@ -556,6 +672,10 @@ async function boot() {
   wireEvents();
   try {
     state.lands = await loadLands();
+    for (const land of state.lands) {
+      land.baseColors = land.colors.slice();          // colors before any condition
+      if (land.condition) state.conditionsPresent.add(land.condition);
+    }
     buildGrid();
     const meta = await loadMeta();
     if (meta) $("#dataMeta").textContent = `${meta.lands} lands · data ${meta.generated}`;
@@ -581,8 +701,8 @@ function wireEvents() {
     analyzeDeck();
   });
   $("#recommendBtn").addEventListener("click", recommend);
-  $("#recClose").addEventListener("click", () => { $("#recDrawer").hidden = true; });
-  $("#recApply").addEventListener("click", applyRecommendation);
+  $("#recClose").addEventListener("click", () => { $("#recDrawer").hidden = true; hidePreview(); });
+  $("#recApply").addEventListener("click", () => { hidePreview(); applyRecommendation(); });
   $("#exportBtn").addEventListener("click", exportDecklist);
   $("#exportClose").addEventListener("click", () => { $("#exportModal").hidden = true; });
   $("#suggestToggle").addEventListener("click", (e) => {
@@ -604,6 +724,20 @@ function wireEvents() {
     const note = $("#gradeNote");
     note.hidden = !note.hidden;
     e.currentTarget.setAttribute("aria-expanded", String(!note.hidden));
+  });
+  $("#landWhy").addEventListener("click", (e) => {
+    const note = $("#landWhyNote");
+    note.hidden = !note.hidden;
+    e.currentTarget.setAttribute("aria-expanded", String(!note.hidden));
+  });
+  $("#smoothMinus").addEventListener("click", () => changeSmooth(-1));
+  $("#smoothPlus").addEventListener("click", () => changeSmooth(1));
+  // Dismiss the tweak popover on an outside click.
+  document.addEventListener("click", (e) => {
+    const pop = $("#smoothPop");
+    if (!pop.hidden && !pop.contains(e.target) && !e.target.closest(".smooth-tag")) {
+      pop.hidden = true;
+    }
   });
   $("#confSel").addEventListener("change", (e) => {
     state.threshold = e.target.value ? parseFloat(e.target.value) : null;

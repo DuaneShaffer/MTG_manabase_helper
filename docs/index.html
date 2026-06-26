@@ -55,6 +55,13 @@
           <span>Lands in build</span>
           <span class="total-num" id="totalLands">0</span>
         </div>
+        <div class="rec-target-row" id="recTargetRow" hidden>
+          <span>Recommended
+            <button class="info-dot" id="landWhy" aria-label="How the recommended land count is derived" aria-expanded="false">i</button>
+          </span>
+          <span class="rec-target-num" id="recTarget">—</span>
+        </div>
+        <p class="why-note" id="landWhyNote" hidden></p>
       </section>
 
       <section class="tools">
@@ -141,6 +148,23 @@
       <p class="drawer-sub" id="exportCopied"></p>
       <textarea id="exportText" class="export-text" spellcheck="false" readonly></textarea>
     </div>
+  </div>
+
+  <!-- Floating card preview (hover over recommendation rows) -->
+  <div class="card-preview" id="cardPreview" hidden><img alt=""></div>
+
+  <!-- Tweak popover for draw/ramp cards -->
+  <div class="smooth-pop" id="smoothPop" hidden>
+    <div class="sp-title" id="smoothPopTitle"></div>
+    <div class="sp-row">
+      <span>Count as draw/ramp</span>
+      <div class="sp-stepper">
+        <button class="step-btn" id="smoothMinus">−</button>
+        <span id="smoothCountVal">0</span>
+        <button class="step-btn" id="smoothPlus">+</button>
+      </div>
+    </div>
+    <div class="sp-of" id="smoothOf"></div>
   </div>
 
   <script type="module" src="js/app.js"></script>

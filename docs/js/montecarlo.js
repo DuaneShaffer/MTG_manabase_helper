@@ -6,14 +6,17 @@
 // turn you'd cast each card, and check whether you can actually cast it on curve.
 // The resulting probability folds in BOTH not-enough-lands and wrong-colours.
 //
-// Simplifications (documented honestly):
-//   * Mulligan: keep the first hand with 2–5 lands, up to 3 mulligans, then keep;
-//     London bottoming sheds toward ~3 lands.
-//   * On the play (no turn-1 draw). One land drop per turn.
-//   * Tapped lands: assumed playable early enough to be online by the cast turn,
-//     EXCEPT a hand with only tapped lands can't cast on curve (the last drop is
-//     tapped). Fetch/again-style effects aren't modelled.
-//   * Nonland cards are inert filler (they don't ramp or fix).
+// Card draw is modelled approximately: `drawCount` cheap card-draw / dig spells
+// become "dig" tokens; each one you've seen by the cast turn lets you look one
+// card deeper for a land (a cantrip cycling toward your next land). Casting
+// timing and mana cost are idealized — it captures the smoothing direction, not
+// exact sequencing.
+//
+// Other simplifications: London mulligan keeping 2–5 lands (≤3 mulls); on the
+// play; one land drop per turn; a hand of only tapped lands can't cast on curve;
+// ramp and scry-to-bottom policies aren't modelled.
+
+const isLand = (c) => c !== null && typeof c === "object";
 
 function shuffle(a, rng) {
   for (let i = a.length - 1; i > 0; i--) {
@@ -23,12 +26,14 @@ function shuffle(a, rng) {
   return a;
 }
 
-// Deck template: a token {colors, tapped} per land copy, null per nonland.
-function buildDeck(buildLands, deckSize) {
+// Deck template: a {colors, tapped} token per land copy, "draw" per dig spell,
+// null for inert filler.
+function buildDeck(buildLands, deckSize, drawCount) {
   const deck = [];
   for (const l of buildLands) {
     for (let i = 0; i < l.count; i++) deck.push({ colors: l.colors, tapped: !!l.tapped });
   }
+  for (let i = 0; i < drawCount; i++) deck.push("draw");
   for (let i = deck.length; i < deckSize; i++) deck.push(null);
   return deck;
 }
@@ -39,13 +44,12 @@ function drawGame(deck, rng) {
   while (true) {
     shuffle(deck, rng);
     const hand = deck.slice(0, 7);
-    const nLands = hand.filter(Boolean).length;
+    const nLands = hand.filter(isLand).length;
     if ((nLands >= 2 && nLands <= 5) || mulls >= 3) {
       const library = deck.slice(7);
-      // Bottom `mulls` cards, shedding toward ~3 lands.
-      for (let i = 0; i < mulls; i++) {
-        const lands = hand.filter(Boolean).length;
-        let idx = lands > 3 ? hand.findIndex(Boolean) : hand.findIndex((c) => !c);
+      for (let i = 0; i < mulls; i++) {                  // bottom toward ~3 lands
+        const lands = hand.filter(isLand).length;
+        let idx = lands > 3 ? hand.findIndex(isLand) : hand.findIndex((c) => !isLand(c));
         if (idx < 0) idx = 0;
         library.push(hand[idx]);
         hand.splice(idx, 1);
@@ -85,23 +89,33 @@ function castableOnCurve(lands, pips, mv) {
 
 /**
  * Simulate the whole deck once per trial and grade every spell from the same draws.
+ * opts: { trials, onPlay, rng, drawCount }
  * @returns {{bySpell: Object<string,number>, overall: number, trials: number}}
  */
 export function simulateDeck(spells, buildLands, deckSize, opts = {}) {
   const trials = opts.trials || 5000;
   const onPlay = opts.onPlay !== false;
-  const rng = opts.rng || Math.random;  // tests pass a seeded RNG for determinism
-  const template = buildDeck(buildLands, deckSize);
+  const rng = opts.rng || Math.random;
+  const drawCount = opts.drawCount || 0;
+  const template = buildDeck(buildLands, deckSize, drawCount);
   const success = {};
   for (const s of spells) success[s.name] = 0;
 
   for (let t = 0; t < trials; t++) {
     const { hand, library } = drawGame(template.slice(), rng);
     for (const s of spells) {
-      const draws = onPlay ? s.mv - 1 : s.mv;          // cards drawn by the cast turn
+      const draws = onPlay ? s.mv - 1 : s.mv;   // natural draws by the cast turn
       const lands = [];
-      for (const c of hand) if (c) lands.push(c);
-      for (let i = 0; i < draws && i < library.length; i++) if (library[i]) lands.push(library[i]);
+      let digs = 0;
+      for (const c of hand) { if (isLand(c)) lands.push(c); else if (c === "draw") digs++; }
+      for (let i = 0; i < draws && i < library.length; i++) {
+        const c = library[i];
+        if (isLand(c)) lands.push(c); else if (c === "draw") digs++;
+      }
+      // Each dig spell seen lets you look one card deeper for a land.
+      for (let j = draws; j < draws + digs && j < library.length; j++) {
+        if (isLand(library[j])) lands.push(library[j]);
+      }
       if (castableOnCurve(lands, s.pips, s.mv)) success[s.name]++;
     }
   }
