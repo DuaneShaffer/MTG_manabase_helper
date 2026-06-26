@@ -11,10 +11,12 @@
   --line:       #3a3127;   /* hairline */
   --parchment:  #ece2cc;   /* headings */
   --ink:        #b6ab93;   /* body text */
-  --ink-dim:    #8a7f6a;   /* captions */
-  --gold:       #c9a227;   /* primary accent */
+  --ink-dim:    #9d9079;   /* captions — lightened to clear AA on panel surfaces */
+  --gold:       #c9a227;   /* primary accent — reserved for primary actions + the target number */
   --gold-soft:  #d8b94a;
   --gold-bright:#e8c95a;
+  --guide:      #5bbcd6;   /* informational/guidance accent (fixer glow, draw-tag) — distinct from gold "action" */
+  --warn:       #e0a33a;   /* shortfall / warnings — amber, off the WUBRG palette so it never reads as Red */
 
   --W: #efe9c9;  --W-ink: #2a2417;
   --U: #2f7bd0;  --U-ink: #eaf3ff;
@@ -31,6 +33,14 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
+
+/* ---------- keyboard focus (a11y floor) ---------- */
+/* One visible ring for every interactive control on these dark, custom surfaces. */
+:focus-visible {
+  outline: 2px solid var(--gold-bright);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 body {
   font-family: var(--font-ui);
   color: var(--ink);
@@ -72,7 +82,7 @@ body {
 .pielet i[data-c="G"]{ background: var(--G); }
 .topbar-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .topbar-status { font-size: 13px; color: var(--ink-dim); letter-spacing: .02em; }
-.data-meta { font-size: 11px; color: var(--ink-dim); opacity: .7; }
+.data-meta { font-size: 11px; color: var(--ink-dim); }
 
 #deckText.dropping { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,162,39,.25); }
 
@@ -86,7 +96,8 @@ body {
 }
 .seg-btn:last-child { border-right: none; }
 .seg-btn:hover { color: var(--parchment); }
-.seg-btn.on { background: rgba(201,162,39,.18); color: var(--gold-bright); }
+/* Quiet selected state — parchment, not gold (gold is reserved for primary actions). */
+.seg-btn.on { background: rgba(236,226,204,.12); color: var(--parchment); }
 .grid-controls input, .grid-controls select {
   background: var(--surface-2); color: var(--parchment);
   border: 1px solid var(--line); border-radius: var(--radius-sm);
@@ -94,11 +105,13 @@ body {
 }
 .grid-controls input { width: 150px; }
 .grid-controls input:focus, .grid-controls select:focus { outline: none; border-color: var(--gold); }
+.grid-controls input:focus-visible, .grid-controls select:focus-visible {
+  outline: 2px solid var(--gold-bright); outline-offset: 1px; border-color: var(--gold);
+}
 .grid-controls select { cursor: pointer; }
 
 .export-text {
-  width: 100%; min-height: 280px; resize: vertical; margin: 0 20px 18px;
-  width: calc(100% - 40px);
+  width: calc(100% - 40px); min-height: 280px; resize: vertical; margin: 0 20px 18px;
   background: var(--surface-2); color: var(--parchment); border: 1px solid var(--line);
   border-radius: var(--radius-sm); padding: 12px; font-family: ui-monospace, monospace; font-size: 13px;
 }
@@ -127,9 +140,10 @@ section.deck-input, section.dashboard, section.tools {
   font-family: var(--font-ui); font-size: 13px; line-height: 1.5; padding: 10px 12px;
 }
 #deckText:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,162,39,.15); }
+#deckText:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 1px; }
 .deck-actions { display: flex; gap: 8px; margin-top: 10px; }
 .hint { font-size: 12px; color: var(--ink-dim); margin: 10px 0 0; min-height: 1px; }
-.hint.warn { color: var(--R); }
+.hint.warn { color: var(--warn); }
 
 .confidence { margin-top: 12px; }
 .confidence label { font-size: 11px; letter-spacing: .2em; text-transform: uppercase;
@@ -140,6 +154,7 @@ section.deck-input, section.dashboard, section.tools {
   padding: 9px 10px; font-family: var(--font-ui); font-size: 13px; cursor: pointer;
 }
 .confidence select:focus { outline: none; border-color: var(--gold); }
+.confidence select:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 1px; border-color: var(--gold); }
 
 /* ---------- grade color scale (A→F) ---------- */
 :root {
@@ -154,8 +169,10 @@ section.deck-input, section.dashboard, section.tools {
 .strip-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
 .strip-headline { display: flex; align-items: center; gap: 9px; }
 .strip-title { font-family: var(--font-display); font-size: 15px; color: var(--parchment); letter-spacing: .04em; }
-.strip-right { display: flex; align-items: center; gap: 14px; }
-.sim-btn { white-space: nowrap; padding: 7px 14px; }
+/* command center: Build it · Test it · Export it — the things you do to an analyzed deck */
+.deck-cmd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.deck-cmd .btn { padding: 8px 14px; }
+.sim-btn { white-space: nowrap; }
 .info-dot {
   width: 19px; height: 19px; border-radius: 50%; border: 1px solid var(--ink-dim);
   background: transparent; color: var(--ink-dim); cursor: pointer; line-height: 1;
@@ -163,7 +180,7 @@ section.deck-input, section.dashboard, section.tools {
   transition: color .12s, border-color .12s, background .12s;
 }
 .info-dot:hover { color: var(--parchment); border-color: var(--parchment); }
-.info-dot[aria-expanded="true"] { background: var(--gold); color: #1c1503; border-color: var(--gold); }
+.info-dot[aria-expanded="true"] { background: rgba(236,226,204,.16); color: var(--parchment); border-color: var(--parchment); }
 .grade-note {
   font-size: 12.5px; color: var(--ink); line-height: 1.55; max-width: 780px;
   background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);
@@ -175,8 +192,25 @@ section.deck-input, section.dashboard, section.tools {
 .overall[hidden] { display: none; }
 .og-letter { font-family: var(--font-display); font-weight: 700; font-size: 26px; line-height: 1;
   width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;
-  color: #12100c; background: var(--grade-C); }
-.og-text { font-size: 12px; color: var(--ink-dim); max-width: 130px; line-height: 1.3; }
+  color: #12100c; background: var(--grade-C); flex: none; }
+.og-text { font-size: 12px; color: var(--ink); line-height: 1.35; }
+
+/* sticky grade HUD inside the left dashboard — overall grade follows you while you edit */
+.hud-grade { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.hud-grade[hidden] { display: none; }
+.grade-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 9px; margin-top: 12px; }
+.grade-legend .gl { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center;
+  font-family: var(--font-display); font-weight: 700; font-size: 11px; color: #12100c; }
+.grade-legend .gl[data-g="A"] { background: var(--grade-A); }
+.grade-legend .gl[data-g="B"] { background: var(--grade-B); }
+.grade-legend .gl[data-g="C"] { background: var(--grade-C); }
+.grade-legend .gl[data-g="D"] { background: var(--grade-D); }
+.grade-legend .gl[data-g="F"] { background: var(--grade-F); }
+.grade-legend .gl-n { font-size: 11px; color: var(--ink-dim); font-variant-numeric: tabular-nums; margin-right: 5px; }
+
+/* empty-state teach line in the dashboard, before a deck is analyzed */
+.dash-empty { font-size: 12.5px; color: var(--ink-dim); line-height: 1.5; margin: 0 0 14px; }
+.dash-empty[hidden] { display: none; }
 
 .spell-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 12px; }
 .spell { position: relative; border-radius: 9px; overflow: hidden; background: var(--surface-2);
@@ -216,14 +250,25 @@ section.deck-input, section.dashboard, section.tools {
 .sim-pill[data-g="D"] { border-color: var(--grade-D); } .sim-pill[data-g="D"] .sp-p { color: var(--grade-D); }
 .sim-pill[data-g="F"] { border-color: var(--grade-F); } .sim-pill[data-g="F"] .sp-p { color: var(--grade-F); }
 
-/* draw / ramp tag (top-right) — flags cards that lower the land count; click to tweak */
+/* draw / ramp tag (top-right) — flags cards that lower the land count; click to tweak.
+   Uses the informational "guide" hue, not gold, so gold stays the action color. */
 .smooth-tag {
   position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%;
   display: grid; place-items: center; font-size: 12px; line-height: 1; cursor: pointer;
-  background: rgba(201,162,39,.92); color: #1c1503; border: 1px solid rgba(0,0,0,.35);
+  background: rgba(20,17,14,.9); color: var(--guide); border: 1px solid var(--guide);
   transition: transform .1s, box-shadow .12s;
 }
-.smooth-tag:hover { transform: scale(1.12); box-shadow: 0 0 10px 1px rgba(201,162,39,.6); }
+.smooth-tag:hover { transform: scale(1.12); box-shadow: 0 0 10px 1px rgba(91,188,214,.6); }
+
+/* card-advantage / dig tag (top-right) — 3 MV draw that helps the sim's top end but
+   does NOT trim the land count. Dashed parchment ring reads as "secondary, sim-only". */
+.dig-tag {
+  position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 12px; line-height: 1; cursor: pointer;
+  background: rgba(20,17,14,.9); color: var(--parchment); border: 1px dashed var(--ink-dim);
+  transition: transform .1s, box-shadow .12s;
+}
+.dig-tag:hover { transform: scale(1.12); box-shadow: 0 0 10px 1px rgba(236,226,204,.4); }
 
 /* recommended-land-count row in the panel */
 .rec-target-row { display: flex; justify-content: space-between; align-items: center;
@@ -310,25 +355,28 @@ section.deck-input, section.dashboard, section.tools {
   min-width: 54px; text-align: right;
 }
 .count .req { color: var(--ink-dim); font-weight: 500; }
-.color-row.short .count { color: var(--R); }
+/* Shortfall is amber (off the WUBRG palette) so "you're short" never collides with the Red pip. */
+.color-row.short .count { color: var(--warn); }
+.color-row.short .count .cur { text-decoration: underline wavy var(--warn); text-underline-offset: 3px; }
 
 .total-row { display: flex; justify-content: space-between; align-items: baseline;
   margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line);
   font-size: 13px; color: var(--ink-dim); letter-spacing: .04em; }
 .total-num { font-family: var(--font-display); font-size: 24px; color: var(--gold-soft); font-variant-numeric: tabular-nums; }
 
-/* ---------- tools ---------- */
-.tools { display: flex; flex-direction: column; gap: 12px; }
-.toggles { display: flex; gap: 8px; }
+/* ---------- grid toggles (Rares / Highlight fixers — live in the grid control bar) ---------- */
 .chip {
-  flex: 1; font-family: var(--font-ui); font-size: 12px; font-weight: 600;
-  padding: 8px 10px; border-radius: 999px; cursor: pointer;
+  font-family: var(--font-ui); font-size: 12px; font-weight: 600;
+  padding: 7px 11px; border-radius: var(--radius-sm); cursor: pointer; white-space: nowrap;
   background: var(--surface-2); border: 1px solid var(--line); color: var(--ink);
   transition: background .15s, color .15s, border-color .15s;
 }
 .chip:hover:not(:disabled) { color: var(--parchment); }
-.chip.on { background: rgba(201,162,39,.16); border-color: var(--gold); color: var(--gold-bright); }
+/* "Rares only" is a filter → quiet parchment selected state, matching the Show segment. */
+.chip.on { background: rgba(236,226,204,.12); border-color: var(--ink-dim); color: var(--parchment); }
 .chip:disabled { opacity: .4; cursor: not-allowed; }
+/* "Highlight fixers" is guidance, not a filter — tie its selected state to the guide hue. */
+.chip-guide.on { background: rgba(91,188,214,.14); border-color: var(--guide); color: var(--guide); }
 
 /* ---------- land grid ---------- */
 .grid-wrap { min-height: 60vh; }
@@ -351,7 +399,8 @@ section.deck-input, section.dashboard, section.tools {
 .tile .ph { position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
   padding: 12px; font-size: 12px; color: var(--ink-dim); }
 .tile.added { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(201,162,39,.35), var(--shadow); }
-.tile.fixer { border-color: var(--gold-soft); box-shadow: 0 0 18px -2px rgba(201,162,39,.55); }
+/* Fixer highlight is guidance ("look here"), not an action — its own hue, not gold. */
+.tile.fixer { border-color: var(--guide); box-shadow: 0 0 18px -2px rgba(91,188,214,.6); }
 
 .stepper {
   position: absolute; left: 8px; right: 8px; bottom: 8px;
@@ -396,10 +445,29 @@ section.deck-input, section.dashboard, section.tools {
 .drawer-foot { padding: 14px 20px; border-top: 1px solid var(--line); }
 .drawer-foot .btn { width: 100%; }
 
+/* ---------- staggered ignite (#14) ---------- */
+/* On analyze, the five color rows light up in WUBRG order — one orchestrated beat.
+   The class is added only on analyze (not on every +/- edit), then removed. */
+.colors.ignite .color-row:nth-child(1) .pip { transition-delay: .00s; }
+.colors.ignite .color-row:nth-child(2) .pip { transition-delay: .09s; }
+.colors.ignite .color-row:nth-child(3) .pip { transition-delay: .18s; }
+.colors.ignite .color-row:nth-child(4) .pip { transition-delay: .27s; }
+.colors.ignite .color-row:nth-child(5) .pip { transition-delay: .36s; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 920px) {
   .layout { grid-template-columns: 1fr; }
   .panel { position: static; }
+  /* Bigger touch targets on the small icon buttons (toward the 44px guideline). */
+  .info-dot { width: 28px; height: 28px; font-size: 13px; }
+  .icon-btn { padding: 4px 10px; }
+  .step-btn { width: 32px; height: 32px; }
+}
+/* Mobile topbar: don't let the verbose status fight the wordmark in one row. */
+@media (max-width: 520px) {
+  .topbar { flex-wrap: wrap; gap: 8px 18px; padding: 12px 18px; }
+  .topbar-meta { align-items: flex-start; flex-basis: 100%; }
+  .topbar-status { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

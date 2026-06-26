@@ -28,17 +28,27 @@ const state = {
   lastRec: null,
   lastImportedDeck: null,  // deck text whose lands were loaded into the build
   avgMV: 3,
-  smoothCards: [],     // [{name, qty}] cheap draw/ramp cards in the deck
-  smoothOverrides: {}, // name -> copies counted toward draw/ramp stats
+  smoothCards: [],     // [{name, qty}] CHEAP (<=2 MV) draw/ramp — trims the land count + helps the sim
+  smoothOverrides: {}, // name -> copies counted toward the land target & sim
+  digCards: [],        // [{name, qty}] mid-cost (3 MV) card advantage — helps the sim, NOT the land count
+  digOverrides: {},    // name -> copies counted toward the sim
   conditionsPresent: new Set(),  // condition keywords across the land pool
   conditionsActive: new Set(),   // conditions the loaded deck satisfies
 };
 
 const COND_THRESHOLD = 6;  // a conditional land "turns on" at this many matching deck cards
+const SMOOTH_MAX_MV = 2;   // <=2 MV draw/ramp smooths your early drops; 3 MV is "card advantage" instead
 
+// Cheap smoothers feed the recommended-land formula (they let you run fewer lands).
 function smoothCount() {
   return state.smoothCards.reduce(
     (s, c) => s + (state.smoothOverrides[c.name] ?? c.qty), 0);
+}
+// Mid-cost diggers don't change the land count, but in-game they dig toward the
+// lands your expensive spells need — so they feed the simulation only.
+function digCount() {
+  return state.digCards.reduce(
+    (s, c) => s + (state.digOverrides[c.name] ?? c.qty), 0);
 }
 
 const $ = (s) => document.querySelector(s);
@@ -329,40 +339,57 @@ function refreshTileDots(land) {
 /* ---------- recommended-land panel ---------- */
 function updateLandPanel() {
   const row = $("#recTargetRow");
+  // Flow-aware primary CTA: echo the target in the Build button so it self-explains.
+  const recBtn = $("#recommendBtn");
+  if (recBtn) recBtn.textContent = state.landTarget ? `Build ~${state.landTarget} lands` : "Build manabase";
   if (!state.landTarget) { row.hidden = true; return; }
   row.hidden = false;
   $("#recTarget").textContent = "~" + state.landTarget;
   const base = recommendLandCount(state.avgMV, state.deckSize, 0);
   const delta = base - state.landTarget;
   const sc = smoothCount();
+  const dc = digCount();
   let why = `Karsten's curve for an average mana value of ${state.avgMV.toFixed(1)}`;
-  if (sc && delta > 0) why += `, minus ~${delta} for ${sc} cheap draw/ramp card${sc === 1 ? "" : "s"} (↻)`;
+  if (sc && delta > 0) why += `, minus ~${delta} for ${sc} cheap (≤${SMOOTH_MAX_MV} MV) draw/ramp card${sc === 1 ? "" : "s"} (↻)`;
   why += `. Aggro leans to the low end, control to the high end.`;
+  if (dc) why += ` ${dc} mid-cost card-advantage spell${dc === 1 ? "" : "s"} (+) don't lower this count — they're too slow to fix your early drops — but they dig toward the lands your expensive spells need, which the simulation rewards.`;
   $("#landWhyNote").textContent = why;
 }
 
-/* ---------- draw/ramp tweak popover ---------- */
+/* ---------- draw/ramp tweak popover (handles both cheap smoothers and diggers) ---------- */
 let _smoothPopName = null;
-function openSmoothPop(name, qty, anchorEl) {
+let _smoothPopKind = "smooth";
+function openSmoothPop(name, qty, anchorEl, kind) {
   _smoothPopName = name;
+  _smoothPopKind = kind === "dig" ? "dig" : "smooth";
   const pop = $("#smoothPop");
+  const ov = _smoothPopKind === "dig" ? state.digOverrides : state.smoothOverrides;
   $("#smoothPopTitle").textContent = name;
-  $("#smoothCountVal").textContent = state.smoothOverrides[name] ?? qty;
-  $("#smoothOf").textContent = `of ${qty} cop${qty === 1 ? "y" : "ies"} count toward the land target & Simulate.`;
+  $("#smoothPopLabel").textContent = _smoothPopKind === "dig" ? "Count as card advantage" : "Count as draw/ramp";
+  $("#smoothCountVal").textContent = ov[name] ?? qty;
+  const cops = `cop${qty === 1 ? "y" : "ies"}`;
+  $("#smoothOf").textContent = _smoothPopKind === "dig"
+    ? `of ${qty} ${cops} dig toward lands in Simulate (they don't change your land count).`
+    : `of ${qty} ${cops} count toward the land target & Simulate.`;
   const r = anchorEl.getBoundingClientRect();
   pop.style.left = Math.min(window.innerWidth - 224, Math.max(6, r.left - 100)) + "px";
   pop.style.top = (r.bottom + 6) + "px";
   pop.hidden = false;
 }
 function changeSmooth(delta) {
-  const card = state.smoothCards.find((c) => c.name === _smoothPopName);
+  const list = _smoothPopKind === "dig" ? state.digCards : state.smoothCards;
+  const ov = _smoothPopKind === "dig" ? state.digOverrides : state.smoothOverrides;
+  const card = list.find((c) => c.name === _smoothPopName);
   if (!card) return;
-  const cur = state.smoothOverrides[card.name] ?? card.qty;
+  const cur = ov[card.name] ?? card.qty;
   const next = Math.max(0, Math.min(card.qty, cur + delta));
-  state.smoothOverrides[card.name] = next;
+  ov[card.name] = next;
   $("#smoothCountVal").textContent = next;
-  state.landTarget = recommendLandCount(state.avgMV, state.deckSize, smoothCount());
-  updateLandPanel();
+  // Only cheap smoothers move the land target; diggers affect the sim only.
+  if (_smoothPopKind === "smooth") {
+    state.landTarget = recommendLandCount(state.avgMV, state.deckSize, smoothCount());
+    updateLandPanel();
+  }
 }
 
 /* ---------- floating card preview ---------- */
@@ -383,6 +410,22 @@ function positionPreview(x, y) {
   cp.style.top = top + "px";
 }
 function hidePreview() { $("#cardPreview").hidden = true; }
+
+/* ---------- modal drawers (focus return + Esc + backdrop close) ---------- */
+let _drawerOpener = null;
+function openDrawer(drawerEl) {
+  _drawerOpener = document.activeElement;
+  drawerEl.hidden = false;
+  // Move focus into the dialog so keyboard users land inside it, not behind it.
+  const focusable = drawerEl.querySelector("button, [href], input, textarea, select");
+  if (focusable) focusable.focus();
+}
+function closeDrawer(drawerEl) {
+  if (drawerEl.hidden) return;
+  drawerEl.hidden = true;
+  if (_drawerOpener && _drawerOpener.focus) _drawerOpener.focus();  // restore focus to the trigger
+  _drawerOpener = null;
+}
 
 /* ---------- deck analysis (all local) ---------- */
 async function analyzeDeck() {
@@ -411,7 +454,9 @@ async function analyzeDeck() {
       if (cols.length) {
         const pips = {};
         for (const col of cols) pips[col] = cons[col].pips;
-        state.spells.push({ name: c.name, image: c.image, qty: qtyByName[c.name] || 1, mv, gold: cols.length > 1, pips, smooth: !!c.smooth });
+        const cheap = !!c.smooth && mv <= SMOOTH_MAX_MV;  // smooths early drops -> trims lands
+        const dig = !!c.smooth && mv > SMOOTH_MAX_MV;     // 3 MV card advantage -> helps the top end
+        state.spells.push({ name: c.name, image: c.image, qty: qtyByName[c.name] || 1, mv, gold: cols.length > 1, pips, smooth: cheap, dig });
       }
     }
     const avg = state.deckCards.length
@@ -419,12 +464,17 @@ async function analyzeDeck() {
     state.avgMV = avg;
     const newDeck = text !== state.lastImportedDeck;
 
-    // Cheap draw/ramp cards (feed the land formula + sim); reset per-card overrides
-    // on a new deck.
-    state.smoothCards = cards
-      .filter((c) => c.smooth && !isLandType(c.type))
+    // Split draw/ramp by mana value: cheap (<=2 MV) smooths early drops and trims
+    // the land target; mid-cost (3 MV) is card advantage that only helps the sim
+    // reach lands for expensive spells. Reset per-card overrides on a new deck.
+    const drawRamp = cards.filter((c) => c.smooth && !isLandType(c.type));
+    state.smoothCards = drawRamp
+      .filter((c) => manaValue(c.cost) <= SMOOTH_MAX_MV)
       .map((c) => ({ name: c.name, qty: qtyByName[c.name] || 0 }));
-    if (newDeck) state.smoothOverrides = {};
+    state.digCards = drawRamp
+      .filter((c) => manaValue(c.cost) > SMOOTH_MAX_MV)
+      .map((c) => ({ name: c.name, qty: qtyByName[c.name] || 0 }));
+    if (newDeck) { state.smoothOverrides = {}; state.digOverrides = {}; }
 
     // Conditional fixing: turn on lands whose spell-type condition the deck meets.
     applyConditions(cards, qtyByName);
@@ -447,6 +497,11 @@ async function analyzeDeck() {
     }
 
     localStorage.setItem(STORAGE_KEY, text);
+    $("#dashEmpty").hidden = true;
+    // One orchestrated beat: the five color rows ignite in WUBRG order on analyze.
+    const colorsWrap = $("#colors");
+    colorsWrap.classList.add("ignite");
+    setTimeout(() => colorsWrap.classList.remove("ignite"), 800);
     refreshDashboard();
     renderSpellStrip();
     markFixers();
@@ -456,16 +511,19 @@ async function analyzeDeck() {
     $("#recommendBtn").disabled = false;
     $("#suggestToggle").disabled = false;
     $("#exportBtn").disabled = false;
-    $("#deckStatus").textContent = `${cards.length} cards · ${state.deckSize}-card deck · target ~${state.landTarget} lands`;
+    // Target now lives in the dashboard (Recommended row) + the Build button, so keep the topbar lean.
+    $("#deckStatus").textContent = `${cards.length} cards · ${state.deckSize}-card deck`;
     const colors = COLORS.filter((c) => state.requirements[c] > 0).map((c) => COLOR_NAMES[c]);
     const parts = [colors.length ? `Needs ${colors.join(", ")} sources.` : "No colored requirements found."];
     if (loadedLands) parts.push(`Loaded ${loadedLands} lands from your deck.`);
     const sc = smoothCount();
     if (sc) {
       const delta = recommendLandCount(avg, state.deckSize, 0) - state.landTarget;
-      parts.push(`${sc} draw/ramp cards (↻)` +
+      parts.push(`${sc} cheap draw/ramp card${sc === 1 ? "" : "s"} (↻)` +
         (delta > 0 ? ` trim ~${delta} land${delta === 1 ? "" : "s"} off the target.` : ` factored into the target.`));
     }
+    const dc = digCount();
+    if (dc) parts.push(`${dc} mid-cost card-advantage spell${dc === 1 ? "" : "s"} (+) help the simulation reach lands for your expensive spells (no change to the land count).`);
     if (state.conditionsActive.size) parts.push(`Conditional lands active for: ${[...state.conditionsActive].join(", ")}.`);
     if (landsOutsidePool) parts.push(`${landsOutsidePool} land(s) not in the Standard pool.`);
     if (missing.length) parts.push(`${missing.length} card(s) not found.`);
@@ -482,7 +540,7 @@ function renderSpellStrip() {
   const grid = $("#spellGrid");
   grid.innerHTML = "";
   state.spellCells = new Map();
-  if (!state.spells.length) { strip.hidden = true; return; }
+  if (!state.spells.length) { strip.hidden = true; $("#hudGrade").hidden = true; return; }
   strip.hidden = false;
   for (const spell of state.spells) {
     const cell = el("div", "spell");
@@ -497,11 +555,17 @@ function renderSpellStrip() {
     simPill.hidden = true;
     simPill.innerHTML = `sim <span class="sp-p"></span>`;
     cell.append(ph, img, qty, badge, simPill);
-    if (spell.smooth) {                          // card draw / ramp — affects land count + sim
+    if (spell.smooth) {                          // cheap (<=2 MV) draw/ramp — trims lands + helps sim
       const tag = el("button", "smooth-tag");
       tag.textContent = "↻";
-      tag.title = "Card draw / ramp — lowers the recommended land count and helps the simulation. Click to adjust how many copies count.";
-      tag.addEventListener("click", (e) => { e.stopPropagation(); openSmoothPop(spell.name, spell.qty, tag); });
+      tag.title = "Cheap draw/ramp — smooths your early drops, so it lowers the recommended land count and helps the simulation. Click to adjust how many copies count.";
+      tag.addEventListener("click", (e) => { e.stopPropagation(); openSmoothPop(spell.name, spell.qty, tag, "smooth"); });
+      cell.appendChild(tag);
+    } else if (spell.dig) {                       // 3 MV card advantage — helps the top end, not the land count
+      const tag = el("button", "dig-tag");
+      tag.textContent = "+";
+      tag.title = "Card advantage — too slow to fix early drops, so it doesn't lower your land count, but it digs toward the lands your expensive spells need (the simulation rewards it). Click to adjust how many copies count.";
+      tag.addEventListener("click", (e) => { e.stopPropagation(); openSmoothPop(spell.name, spell.qty, tag, "dig"); });
       cell.appendChild(tag);
     }
     grid.appendChild(cell);
@@ -542,9 +606,9 @@ function doGrade() {
     worst = Math.min(worst, prob);
   }
   state.staticWorst = worst;
+  $("#hudGrade").hidden = false;
   const og = $("#overallGrade");
   const g = grade(worst);
-  og.hidden = false;
   og.querySelector(".og-letter").textContent = g.letter;
   og.querySelector(".og-letter").style.background = `var(--grade-${g.letter})`;
   og.querySelector(".og-text").textContent = `Weakest card ${pct(worst)} — ${g.label} · Simulate for true odds`;
@@ -572,7 +636,8 @@ function runSimulation() {
       const c = state.counts[land.name] || 0;
       if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, count: c });
     }
-    const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount: smoothCount() });
+    // Both cheap smoothers and mid-cost diggers help you find lands in a real game.
+    const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount: smoothCount() + digCount() });
     // Populate the simulated pill on each card — the static badge stays as-is, so
     // both numbers are visible side by side.
     for (const spell of state.spells) {
@@ -586,9 +651,9 @@ function runSimulation() {
       pill.hidden = false;
     }
     // Overall: show static (assumes lands) alongside simulated (includes screw).
+    $("#hudGrade").hidden = false;
     const og = $("#overallGrade");
     const sg = grade(res.overall);
-    og.hidden = false;
     og.querySelector(".og-letter").textContent = sg.letter;
     og.querySelector(".og-letter").style.background = `var(--grade-${sg.letter})`;
     og.querySelector(".og-text").textContent =
@@ -626,14 +691,14 @@ function recommend() {
   $("#recSummary").textContent = `${rec.total} lands · ${rec.taplands} tapped` +
     (short.length ? ` · still short on ${short.join(", ")}` : " · every color covered");
   state.lastRec = picks;
-  $("#recDrawer").hidden = false;
+  openDrawer($("#recDrawer"));
 }
 
 function applyRecommendation() {
   if (!state.lastRec) return;
   state.counts = {};
   for (const p of state.lastRec) state.counts[p.name] = p.count;
-  $("#recDrawer").hidden = true;
+  closeDrawer($("#recDrawer"));
   syncCountsToTiles();
   applyVisibility();
   markFixers();
@@ -663,10 +728,11 @@ function exportDecklist() {
   lines.push(...(land.length ? land : ["(no lands added yet)"]));
   const text = lines.join("\n");
   $("#exportText").value = text;
-  $("#exportModal").hidden = false;
+  $("#exportCopied").textContent = "";
+  openDrawer($("#exportModal"));
   navigator.clipboard?.writeText(text).then(
     () => { $("#exportCopied").textContent = "Copied to clipboard."; },
-    () => { $("#exportCopied").textContent = ""; },
+    () => { $("#exportCopied").textContent = "Select all and copy."; },
   );
 }
 
@@ -706,10 +772,23 @@ function wireEvents() {
     analyzeDeck();
   });
   $("#recommendBtn").addEventListener("click", recommend);
-  $("#recClose").addEventListener("click", () => { $("#recDrawer").hidden = true; hidePreview(); });
+  $("#recClose").addEventListener("click", () => { hidePreview(); closeDrawer($("#recDrawer")); });
   $("#recApply").addEventListener("click", () => { hidePreview(); applyRecommendation(); });
   $("#exportBtn").addEventListener("click", exportDecklist);
-  $("#exportClose").addEventListener("click", () => { $("#exportModal").hidden = true; });
+  $("#exportClose").addEventListener("click", () => closeDrawer($("#exportModal")));
+  // Backdrop click (on the dim area, not the card) closes a drawer.
+  for (const id of ["recDrawer", "exportModal"]) {
+    const d = $("#" + id);
+    d.addEventListener("click", (e) => { if (e.target === d) { hidePreview(); closeDrawer(d); } });
+  }
+  // Escape closes whatever overlay is open (drawer first, then the tweak popover).
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const rec = $("#recDrawer"), exp = $("#exportModal"), pop = $("#smoothPop");
+    if (!rec.hidden) { hidePreview(); closeDrawer(rec); }
+    else if (!exp.hidden) closeDrawer(exp);
+    else if (!pop.hidden) pop.hidden = true;
+  });
   $("#suggestToggle").addEventListener("click", (e) => {
     state.suggest = !state.suggest;
     e.target.classList.toggle("on", state.suggest);

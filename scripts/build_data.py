@@ -119,10 +119,13 @@ def slim_land(card):
 
 
 def _smooths(card):
-    """Cheap card-draw / ramp that smooths your draws (Karsten's land-count input).
+    """Low-cost (<=3 MV) card-draw / ramp candidate.
 
-    True for low-mana-value cards that draw, dig (scry/surveil), tutor a land, or
-    ramp (a nonland that taps for mana). Used to shave the recommended land count.
+    True for cards that draw, dig (scry/surveil), tutor a land, or ramp (a nonland
+    that taps for mana). The web app refines this by mana value: <=2 MV smooths
+    your early drops and trims the recommended land count, while 3 MV is treated as
+    "card advantage" that helps the simulation reach lands for expensive spells but
+    does NOT lower the land count (3-drops are too slow to fix early land drops).
     """
     if (card.get("cmc", 0) or 0) > 3:
         return False
