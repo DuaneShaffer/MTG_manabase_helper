@@ -139,17 +139,22 @@ for (const deck of DECKS) {
   const avgMV = deckCards.length ? deckCards.reduce((s, c) => s + manaValue(c.cost), 0) / deckCards.length : 3;
   const smoothCount = resolved.filter((c) => c.smooth && !isLandType(c.type) && manaValue(c.cost) <= SMOOTH_MAX_MV)
     .reduce((s, c) => s + (qtyByName[c.name] || 0), 0);
-  const landTarget = recommendLandCount(avgMV, deckSize, smoothCount);
   const spells = buildSpells(resolved);
 
   // pro baseline
   const proCounts = {}, proNB = [];
+  let proLandCount = 0;
   for (const e of entries) {
     const ld = landByName.get(e.name.toLowerCase());
     if (!ld) continue;
     proCounts[e.name] = (proCounts[e.name] || 0) + e.qty;
+    proLandCount += e.qty;
     if (!ld.basic) proNB.push(e.name);
   }
+  // Test the recommender at the PRO's land count so this measures land SELECTION,
+  // not the (separately validated) land-count formula. recommendLandCount shown
+  // for reference only.
+  const landTarget = proLandCount || recommendLandCount(avgMV, deckSize, smoothCount);
   const proSim = simRate(spells, proCounts, deckSize, smoothCount, seed);
   proSimSum += proSim;
 

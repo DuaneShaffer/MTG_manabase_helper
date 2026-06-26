@@ -72,16 +72,31 @@ function loadSolver() {
 // expanded back across concrete cards (see summarize). Off-color and colorless
 // lands are dropped (they can't satisfy a needed-color minimum). Members are
 // name-sorted for deterministic output.
+const BASIC_TYPE_LIST = ["Plains", "Island", "Swamp", "Mountain", "Forest"];
+// Basic land types a land has (from "Land — Island Mountain"), used both to satisfy
+// a Verge's type gate and to know which lands provide a given type.
+function basicTypesOf(land) {
+  const sub = (land.type || "").split("—")[1] || "";
+  return BASIC_TYPE_LIST.filter((t) => sub.includes(t));
+}
+
 export function candidatePool(requirements, lands) {
   const needed = new Set(COLORS.filter((c) => (requirements[c] || 0) > 0));
   const groups = new Map();
   for (const land of [...lands].sort((a, b) => a.name.localeCompare(b.name))) {
     const colors = COLORS.filter((c) => (land.colors || []).includes(c));
     if (!colors.some((c) => needed.has(c))) continue; // colorless / off-color lands can't help a color min
-    const sig = colors.join("") + "|" + (land.tapped ? "T" : "U") + "|" + (land.basic ? "B" : "N");
+    const gated = COLORS.filter((c) => (land.gatedColors || []).includes(c)); // Verge: gated on a basic type
+    // Verges are NOT interchangeable with true duals of the same colors, so the
+    // gated color is part of the signature (keeps them in their own group).
+    const sig = colors.join("") + "|" + (land.tapped ? "T" : "U") + "|" + (land.basic ? "B" : "N") + "|g" + gated.join("");
     let g = groups.get(sig);
     if (!g) {
-      g = { name: land.name, colors, tapped: !!land.tapped, basic: !!land.basic, land, members: [] };
+      g = {
+        name: land.name, colors, tapped: !!land.tapped, basic: !!land.basic, land, members: [],
+        gated, typeGate: land.typeGate || [], types: basicTypesOf(land),
+        reliable: colors.filter((c) => !gated.includes(c)), // colors available without the type gate
+      };
       groups.set(sig, g);
     }
     g.members.push({ name: land.name, q: landQuality(land) });
@@ -120,8 +135,12 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
   if (objective !== "taplands") constraints.taps = { max: taplandCap };
 
   pool.forEach((cand, i) => {
+    // Objective: reward a Verge as the full dual it becomes once its basic type is
+    // online, so the solver prefers it like pros do. The HARD color minimum still
+    // routes the gated color through the support linkage below (col_ credit uses
+    // only the reliable colors), so it can't be leaned on without the types.
     const neededCount = cand.colors.reduce((n, c) => n + (needed.has(c) ? 1 : 0), 0);
-    const off = cand.colors.length - neededCount; // colors the deck doesn't need
+    const off = cand.colors.filter((c) => !needed.has(c)).length; // colors the deck doesn't need
     const v = {
       total: 1,                          // constraint: total land count
       taps: cand.tapped ? 1 : 0,         // constraint: tapland cap
@@ -131,7 +150,7 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
       obj_taps: (cand.tapped ? 1 : 0) + OFF_PENALTY * off,
       obj_total: 1 + OFF_PENALTY * off,
     };
-    for (const c of cand.colors) if (constraints["col_" + c]) v["col_" + c] = 1;
+    for (const c of cand.reliable) if (constraints["col_" + c]) v["col_" + c] = 1;
     const capKey = "cap_" + i; // per-variable copy bound
     v[capKey] = 1;
     // A signature's real capacity is 4 per distinct non-basic card; basics are
@@ -141,6 +160,29 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
     constraints[capKey] = { max: cand.basic ? Math.max(landTarget || 0, 40) : NONBASIC_MAX * cand.members.length };
     variables[cand.name] = v;
     ints[cand.name] = 1;
+  });
+
+  // Verge gating: a gated color only counts up to how many lands supply the
+  // enabling basic type. Model it as an aux variable per (verge, gated color):
+  //   credit ≤ verge copies   AND   credit ≤ Σ(lands with a matching basic type)
+  // and route that credit (not the verge itself) into the color minimum. So the
+  // solver only leans on a Verge's second color when the build actually supplies
+  // the types — it won't just jam in four.
+  pool.forEach((cand, i) => {
+    if (!cand.gated.length || !cand.typeGate.length) return;
+    const supporters = pool.filter((p) => p.types.some((t) => cand.typeGate.includes(t)));
+    for (const c of cand.gated) {
+      if (!constraints["col_" + c]) continue; // gated color not needed
+      const aux = `vcredit_${i}_${c}`;
+      const leCopies = `vle_copies_${i}_${c}`;
+      const leSupport = `vle_supp_${i}_${c}`;
+      constraints[leCopies] = { min: 0 };   // verge_copies − credit ≥ 0
+      constraints[leSupport] = { min: 0 };  // Σ supporters − credit ≥ 0
+      variables[cand.name][leCopies] = (variables[cand.name][leCopies] || 0) + 1;
+      for (const s of supporters) variables[s.name][leSupport] = (variables[s.name][leSupport] || 0) + 1;
+      variables[aux] = { ["col_" + c]: 1, [leCopies]: -1, [leSupport]: -1 };
+      ints[aux] = 1;
+    }
   });
 
   return { optimize: obj.key, opType: obj.opType, constraints, variables, ints, _pool: pool };

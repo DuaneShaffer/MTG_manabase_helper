@@ -70,6 +70,24 @@ async function run() {
 
   ok("OBJECTIVES expose three labeled goals", Object.keys(OBJECTIVES).length === 3);
 
+  // --- Verge type-gating ----------------------------------------------------
+  // A Verge makes its first color freely but its second (gated) color only if you
+  // control a matching basic type. Need B; the only B source is a Verge gated on
+  // Island/Swamp.
+  const verge = { name: "UB Verge", colors: ["U", "B"], gatedColors: ["B"],
+    typeGate: ["Island", "Swamp"], type: "Land", tapped: false, basic: false };
+  const islandSupporter = { name: "Island", colors: ["U"], type: "Basic Land — Island", tapped: false, basic: true };
+
+  // Need B (gated) with no land of a matching basic type in the pool → the verge
+  // can't be leaned on for B.
+  const noTypes = await optimizeManabase({ requirements: { W: 0, U: 0, B: 2, R: 0, G: 0 }, lands: [verge], landTarget: 2, objective: "untapped" });
+  ok("verge alone can't supply its gated color (no enabling basic type)", !noTypes.feasible);
+
+  // Need U+B; Islands satisfy U and also turn on the verge's gated B.
+  const withTypes = await optimizeManabase({ requirements: { W: 0, U: 1, B: 2, R: 0, G: 0 }, lands: [verge, islandSupporter], landTarget: 6, objective: "untapped" });
+  ok("verge supplies its gated color once a matching type is in the build",
+    withTypes.feasible && (withTypes.counts["Island"] || 0) > 0 && (withTypes.counts["UB Verge"] || 0) > 0);
+
   console.log(`\n${passed} optimizer tests passed`);
 }
 run().catch((e) => { console.error(e); process.exit(1); });

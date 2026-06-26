@@ -64,14 +64,19 @@ _BAD_COST = re.compile(r"sacrifice|tap an|tap a |tap two|exile|discard|remove|\{
 
 
 def analyze_land_colors(card):
-    """Classify a land's color output into (reliable, conditional, condition).
+    """Classify a land's color output into (reliable, conditional, condition,
+    type_gated, type_gate).
 
-    ``reliable``    — colors it makes for general fixing (free or {1}-cost taps,
+    ``reliable``    — colors it makes for general fixing (free or life-cost taps,
                       including "any color"/"choose a color" lands).
     ``conditional`` — colors gated to a spell type ("Spend this mana only to cast
                       a creature/Hero/artifact spell"); only real when the deck
                       has enough of that type.
     ``condition``   — the spell-type keyword for the conditional colors.
+    ``type_gated``  — colors gated on *controlling a basic land type* (the "Verge"
+                      cycle: "{T}: Add {B}. Activate only if you control an Island
+                      or a Swamp."). Real only if the build supplies those types.
+    ``type_gate``   — the basic land types that enable ``type_gated`` colors.
 
     Scryfall's ``produced_mana`` over-reports (it lists every color a land *can*
     make, however restricted/costly), so we parse the abilities instead.
@@ -79,11 +84,12 @@ def analyze_land_colors(card):
     produced = set(card.get("produced_mana") or []) & set("WUBRG")
     type_line = card.get("type_line", "") or ""
     if not produced:
-        return [], [], None
+        return [], [], None, [], []
     if any(t in type_line for t in _BASIC_TYPES):
-        return sorted(produced), [], None  # typed land — genuine fixing
+        return sorted(produced), [], None, [], []  # typed land — genuine fixing
 
     reliable, conditional, condition = set(), set(), None
+    type_gated, type_gate = set(), set()
     for line in _oracle(card).split("\n"):
         low = line.lower()
         if "add" not in low or ":" not in line:
@@ -99,22 +105,34 @@ def analyze_land_colors(card):
             continue
         # "Spend this mana only to cast a creature spell" / "an instant or sorcery"
         m = re.search(r"spend this mana only to cast (?:a |an )?([a-z]+(?: or [a-z]+)*)", low)
+        # Verge: "Activate (this ability) only if you control a/an Island or a Swamp."
+        mt = re.search(r"activate (?:this ability )?only if you control (.+)", low)
         if m:
             conditional |= colors
             condition = condition or m.group(1).replace(" spell", "").strip()
+        elif mt:
+            type_gated |= colors
+            for t in _BASIC_TYPES:
+                if t.lower() in mt.group(1):
+                    type_gate.add(t)
         else:
             reliable |= colors
-    return sorted(reliable), sorted(conditional - reliable), condition
+    return (sorted(reliable), sorted(conditional - reliable), condition,
+            sorted(type_gated - reliable), sorted(type_gate))
 
 
 def slim_land(card):
     uris = _uris(card)
-    reliable, cond_colors, condition = analyze_land_colors(card)
+    reliable, cond_colors, condition, gated_colors, type_gate = analyze_land_colors(card)
     out = {
         "name": card["name"],
         "type": card.get("type_line", ""),
         "rarity": card.get("rarity", ""),
-        "colors": reliable,
+        # A Verge's gated color IS real fixing once you control the basic type, so
+        # it stays in `colors` (the land grades/tallies as a full dual); typeGate
+        # below tells the optimizer to only lean on it when the build supplies the
+        # enabling basic types.
+        "colors": sorted(set(reliable) | set(gated_colors)),
         "image": uris.get("small"),
         "image_hi": uris.get("normal"),
         "basic": land_mod.is_basic(card),
@@ -123,6 +141,9 @@ def slim_land(card):
     if cond_colors and condition:
         out["condColors"] = cond_colors
         out["condition"] = condition
+    if gated_colors and type_gate:
+        out["gatedColors"] = gated_colors
+        out["typeGate"] = type_gate
     return out
 
 
