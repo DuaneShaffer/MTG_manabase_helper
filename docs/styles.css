@@ -433,17 +433,20 @@ section.deck-input, section.dashboard, section.tools {
   width: min(560px, 100%); max-height: 84vh; display: flex; flex-direction: column; box-shadow: var(--shadow); }
 .drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 18px 20px 0; }
 .drawer-head h2 { font-family: var(--font-display); color: var(--parchment); font-size: 19px; margin: 0; letter-spacing: .04em; }
-.rec-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 12px 20px 0; }
-.rec-obj { display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: .14em;
-  text-transform: uppercase; color: var(--ink-dim); }
-.rec-obj[hidden] { display: none; }
-.rec-obj select {
-  background: var(--surface-2); color: var(--parchment); border: 1px solid var(--line);
-  border-radius: var(--radius-sm); padding: 7px 10px; font-family: var(--font-ui); font-size: 12px;
-  letter-spacing: normal; text-transform: none; cursor: pointer;
+/* selectable list of computed manabase options */
+.rec-options { display: flex; flex-direction: column; gap: 8px; padding: 14px 20px 0; }
+.rec-option {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 11px 13px; cursor: pointer; text-align: left; width: 100%;
+  font-family: var(--font-ui); transition: border-color .12s, background .12s;
 }
-.rec-obj select:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 1px; border-color: var(--gold); }
-.drawer-sub { color: var(--ink-dim); font-size: 13px; padding: 6px 20px 0; margin: 0; }
+.rec-option:hover { border-color: var(--ink-dim); }
+.rec-option.on { border-color: var(--gold); background: rgba(201,162,39,.10); }
+.rec-option .ro-name { color: var(--parchment); font-weight: 600; font-size: 13px; }
+.rec-option.on .ro-name { color: var(--gold-bright); }
+.rec-option .ro-stat { color: var(--ink-dim); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.drawer-sub { color: var(--ink-dim); font-size: 13px; padding: 8px 20px 0; margin: 0; }
 .icon-btn { background: none; border: none; color: var(--ink-dim); font-size: 24px; cursor: pointer; line-height: 1; }
 .icon-btn:hover { color: var(--parchment); }
 .rec-list { overflow-y: auto; padding: 14px 20px; display: flex; flex-direction: column; gap: 6px; }

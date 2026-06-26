@@ -27,8 +27,7 @@ const state = {
   tiles: new Map(),    // land name -> { el, land, numEl }
   spellCells: new Map(),
   lastRec: null,
-  recMethod: "greedy",     // greedy | ilp  — how the drawer picks lands
-  recObjective: "untapped",// ilp objective: untapped | taplands | lands
+  recOptions: [],          // computed manabase options shown in the drawer
   lastImportedDeck: null,  // deck text whose lands were loaded into the build
   avgMV: 3,
   smoothCards: [],     // [{name, qty}] CHEAP (<=2 MV) draw/ramp — trims the land count + helps the sim
@@ -699,48 +698,102 @@ const _shortNote = (rec) => {
   return short.length ? ` · still short on ${short.join(", ")}` : " · every color covered";
 };
 
-// Compute the manabase for the current method/objective and fill the drawer.
+// The ILP objectives we present, in display/priority order. Identical results are
+// deduped (keeping the higher-priority label), so the user sees only distinct bases.
+const REC_OBJECTIVES = ["untapped", "taplands", "lands"];
+// Distinct *choices* are distinct (land count, tapped count) tradeoffs — that's
+// what the user sees and decides on. Objectives that land on the same tradeoff
+// (e.g. "most untapped" and "fewest tapped" both at 24 lands / 0 tapped) collapse
+// to one option, keeping the higher-priority label.
+const _sig = (rec) => rec.total + "|" + rec.taplands;
+
+// Compute every optimal manabase up front and let the user compare and pick.
 let _recRun = 0;
-async function computeRec() {
-  const run = ++_recRun;  // guard against out-of-order async results
-  if (state.recMethod === "ilp") {
-    $("#recApply").disabled = true;
-    $("#recSummary").textContent = "Optimizing…";
-    $("#recList").innerHTML = "";
-    try {
-      const rec = await optimizeManabase({
-        requirements: state.requirements, lands: state.lands,
-        landTarget: state.landTarget, objective: state.recObjective,
-      });
-      if (run !== _recRun) return;  // a newer request superseded this one
-      if (!rec.feasible) {
-        state.lastRec = null;
-        $("#recList").innerHTML = "";
-        const capNote = state.recObjective === "lands" ? "" : " within the tapland cap";
-        $("#recSummary").textContent =
-          `No ${state.landTarget}-land base can meet these requirements${capNote}. ` +
-          `Raise the land count, lower your target confidence, or add more dual lands to the pool.`;
-        return;
-      }
-      const obj = (OBJECTIVES[state.recObjective] || {}).label || "";
-      renderRecList(rec, `${rec.total} lands · ${rec.taplands} tapped · provably optimal — ${obj.toLowerCase()}${_shortNote(rec)}`);
-      $("#recApply").disabled = false;
-    } catch (e) {
-      if (run !== _recRun) return;
-      $("#recList").innerHTML = "";
-      state.lastRec = null;
-      $("#recSummary").textContent = "Couldn't run the optimizer: " + e.message;
+async function computeAllRecs() {
+  const run = ++_recRun;
+  state.recOptions = [];
+  state.lastRec = null;
+  $("#recApply").disabled = true;
+  $("#recOptions").innerHTML = "";
+  $("#recList").innerHTML = "";
+  $("#recSummary").textContent = "Working out your options…";
+
+  try {
+    const results = await Promise.all(
+      REC_OBJECTIVES.map((objective) =>
+        optimizeManabase({
+          requirements: state.requirements, lands: state.lands,
+          landTarget: state.landTarget, objective,
+        }).then((rec) => ({ objective, rec }), () => null)),
+    );
+    if (run !== _recRun) return;  // superseded by a newer open/recompute
+
+    // Keep feasible results, deduped by the actual land set (first label wins).
+    const options = [];
+    const seen = new Set();
+    for (const r of results) {
+      if (!r || !r.rec.feasible) continue;
+      const sig = _sig(r.rec);
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      options.push({ label: OBJECTIVES[r.objective].label, rec: r.rec });
     }
-  } else {
-    const rec = recommendManabase(state.requirements, state.lands, { landTarget: state.landTarget });
-    renderRecList(rec, `${rec.total} lands · ${rec.taplands} tapped · balanced heuristic${_shortNote(rec)}`);
-    $("#recApply").disabled = false;
+
+    if (options.length) {
+      state.recOptions = options;
+      renderRecOptions(options);
+      selectRecOption(0);
+      return;
+    }
+
+    // No feasible optimal base at this target — fall back to the greedy heuristic,
+    // which always returns something (possibly short), and explain.
+    const greedy = recommendManabase(state.requirements, state.lands, { landTarget: state.landTarget });
+    state.recOptions = [{ label: "Best effort", rec: greedy }];
+    renderRecOptions(state.recOptions);
+    selectRecOption(0);
+    $("#recSummary").textContent =
+      `No base can fully meet these requirements at ~${state.landTarget} lands — showing the closest fit. ` +
+      `Raise the land count, lower your target confidence, or add more dual lands.`;
+  } catch (e) {
+    if (run !== _recRun) return;
+    // Solver unavailable: fall back to the greedy recommender.
+    const greedy = recommendManabase(state.requirements, state.lands, { landTarget: state.landTarget });
+    state.recOptions = [{ label: "Balanced", rec: greedy }];
+    renderRecOptions(state.recOptions);
+    selectRecOption(0);
+    $("#recSummary").textContent = `Optimizer unavailable (${e.message}); showing the balanced recommendation.`;
   }
+}
+
+// Render the selectable list of computed options (name + headline stats).
+function renderRecOptions(options) {
+  const wrap = $("#recOptions");
+  wrap.innerHTML = "";
+  options.forEach((opt, i) => {
+    const btn = el("button", "rec-option");
+    btn.dataset.i = i;
+    btn.innerHTML =
+      `<span class="ro-name">${opt.label}</span>` +
+      `<span class="ro-stat">${opt.rec.total} lands · ${opt.rec.taplands} tapped</span>`;
+    wrap.appendChild(btn);
+  });
+}
+
+function selectRecOption(i) {
+  const opt = state.recOptions[i];
+  if (!opt) return;
+  for (const b of document.querySelectorAll("#recOptions .rec-option")) {
+    b.classList.toggle("on", Number(b.dataset.i) === i);
+  }
+  const note = state.recOptions.length > 1 ? "provably optimal — " + opt.label.toLowerCase() : opt.label.toLowerCase();
+  renderRecList(opt.rec, `${opt.rec.total} lands · ${opt.rec.taplands} tapped · ${note}${_shortNote(opt.rec)}`);
+  $("#recApply").disabled = false;
 }
 
 function recommend() {
   openDrawer($("#recDrawer"));
-  computeRec();
+  computeAllRecs();
 }
 
 function applyRecommendation() {
@@ -821,15 +874,10 @@ function wireEvents() {
     analyzeDeck();
   });
   $("#recommendBtn").addEventListener("click", recommend);
-  $("#recMethod").addEventListener("click", (e) => {
-    const btn = e.target.closest(".seg-btn");
-    if (!btn) return;
-    state.recMethod = btn.dataset.method;
-    for (const b of document.querySelectorAll("#recMethod .seg-btn")) b.classList.toggle("on", b === btn);
-    $("#recObjWrap").hidden = state.recMethod !== "ilp";
-    computeRec();
+  $("#recOptions").addEventListener("click", (e) => {
+    const btn = e.target.closest(".rec-option");
+    if (btn) selectRecOption(Number(btn.dataset.i));
   });
-  $("#recObjective").addEventListener("change", (e) => { state.recObjective = e.target.value; computeRec(); });
   $("#recClose").addEventListener("click", () => { hidePreview(); closeDrawer($("#recDrawer")); });
   $("#recApply").addEventListener("click", () => { hidePreview(); applyRecommendation(); });
   $("#exportBtn").addEventListener("click", exportDecklist);

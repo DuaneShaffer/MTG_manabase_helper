@@ -141,20 +141,7 @@
         <h2 id="recTitle">Recommended manabase</h2>
         <button class="icon-btn" id="recClose" aria-label="Close">×</button>
       </div>
-      <div class="rec-controls">
-        <div class="seg" id="recMethod" role="group" aria-label="How to choose lands">
-          <button class="seg-btn on" data-method="greedy">Balanced</button>
-          <button class="seg-btn" data-method="ilp">Optimal</button>
-        </div>
-        <label class="rec-obj" id="recObjWrap" hidden>
-          <span>Goal</span>
-          <select id="recObjective" aria-label="Optimization goal">
-            <option value="untapped">Most untapped sources</option>
-            <option value="taplands">Fewest tapped lands</option>
-            <option value="lands">Fewest total lands</option>
-          </select>
-        </label>
-      </div>
+      <div class="rec-options" id="recOptions" role="group" aria-label="Optimal manabase options"></div>
       <p class="drawer-sub" id="recSummary"></p>
       <div class="rec-list" id="recList"></div>
       <div class="drawer-foot">
