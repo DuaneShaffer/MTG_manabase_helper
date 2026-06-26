@@ -3,6 +3,7 @@ import { costConstraints, manaValue } from "./mana.js";
 import { requirementsForCards } from "./requirements.js";
 import { castableProbability, multivariateCastable, grade } from "./hypergeometric.js";
 import { recommend as recommendManabase, recommendLandCount } from "./recommend.js";
+import { optimizeManabase, OBJECTIVES } from "./optimize.js";
 import { simulateDeck } from "./montecarlo.js";
 import { parseDeckText, deckEntries, cardNames } from "./decklist.js";
 import { loadLands, loadMeta, resolveDeck, loadExampleDeck } from "./data.js";
@@ -26,6 +27,8 @@ const state = {
   tiles: new Map(),    // land name -> { el, land, numEl }
   spellCells: new Map(),
   lastRec: null,
+  recMethod: "greedy",     // greedy | ilp  — how the drawer picks lands
+  recObjective: "untapped",// ilp objective: untapped | taplands | lands
   lastImportedDeck: null,  // deck text whose lands were loaded into the build
   avgMV: 3,
   smoothCards: [],     // [{name, qty}] CHEAP (<=2 MV) draw/ramp — trims the land count + helps the sim
@@ -664,9 +667,9 @@ function runSimulation() {
   }, 20);
 }
 
-/* ---------- recommendation (local) ---------- */
-function recommend() {
-  const rec = recommendManabase(state.requirements, state.lands, { landTarget: state.landTarget });
+/* ---------- recommendation ---------- */
+// Render a recommend()/optimize() result into the drawer list + summary.
+function renderRecList(rec, summaryText) {
   const byName = new Map(state.lands.map((l) => [l.name, l]));
   const picks = Object.entries(rec.counts)
     .sort((a, b) => b[1] - a[1])
@@ -687,11 +690,57 @@ function recommend() {
     }
     list.appendChild(row);
   }
-  const short = Object.keys(rec.shortfall || {});
-  $("#recSummary").textContent = `${rec.total} lands · ${rec.taplands} tapped` +
-    (short.length ? ` · still short on ${short.join(", ")}` : " · every color covered");
   state.lastRec = picks;
+  $("#recSummary").textContent = summaryText;
+}
+
+const _shortNote = (rec) => {
+  const short = Object.keys(rec.shortfall || {});
+  return short.length ? ` · still short on ${short.join(", ")}` : " · every color covered";
+};
+
+// Compute the manabase for the current method/objective and fill the drawer.
+let _recRun = 0;
+async function computeRec() {
+  const run = ++_recRun;  // guard against out-of-order async results
+  if (state.recMethod === "ilp") {
+    $("#recApply").disabled = true;
+    $("#recSummary").textContent = "Optimizing…";
+    $("#recList").innerHTML = "";
+    try {
+      const rec = await optimizeManabase({
+        requirements: state.requirements, lands: state.lands,
+        landTarget: state.landTarget, objective: state.recObjective,
+      });
+      if (run !== _recRun) return;  // a newer request superseded this one
+      if (!rec.feasible) {
+        state.lastRec = null;
+        $("#recList").innerHTML = "";
+        const capNote = state.recObjective === "lands" ? "" : " within the tapland cap";
+        $("#recSummary").textContent =
+          `No ${state.landTarget}-land base can meet these requirements${capNote}. ` +
+          `Raise the land count, lower your target confidence, or add more dual lands to the pool.`;
+        return;
+      }
+      const obj = (OBJECTIVES[state.recObjective] || {}).label || "";
+      renderRecList(rec, `${rec.total} lands · ${rec.taplands} tapped · provably optimal — ${obj.toLowerCase()}${_shortNote(rec)}`);
+      $("#recApply").disabled = false;
+    } catch (e) {
+      if (run !== _recRun) return;
+      $("#recList").innerHTML = "";
+      state.lastRec = null;
+      $("#recSummary").textContent = "Couldn't run the optimizer: " + e.message;
+    }
+  } else {
+    const rec = recommendManabase(state.requirements, state.lands, { landTarget: state.landTarget });
+    renderRecList(rec, `${rec.total} lands · ${rec.taplands} tapped · balanced heuristic${_shortNote(rec)}`);
+    $("#recApply").disabled = false;
+  }
+}
+
+function recommend() {
   openDrawer($("#recDrawer"));
+  computeRec();
 }
 
 function applyRecommendation() {
@@ -772,6 +821,15 @@ function wireEvents() {
     analyzeDeck();
   });
   $("#recommendBtn").addEventListener("click", recommend);
+  $("#recMethod").addEventListener("click", (e) => {
+    const btn = e.target.closest(".seg-btn");
+    if (!btn) return;
+    state.recMethod = btn.dataset.method;
+    for (const b of document.querySelectorAll("#recMethod .seg-btn")) b.classList.toggle("on", b === btn);
+    $("#recObjWrap").hidden = state.recMethod !== "ilp";
+    computeRec();
+  });
+  $("#recObjective").addEventListener("change", (e) => { state.recObjective = e.target.value; computeRec(); });
   $("#recClose").addEventListener("click", () => { hidePreview(); closeDrawer($("#recDrawer")); });
   $("#recApply").addEventListener("click", () => { hidePreview(); applyRecommendation(); });
   $("#exportBtn").addEventListener("click", exportDecklist);
