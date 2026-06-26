@@ -49,65 +49,64 @@ def _enters_tapped(oracle):
 
 
 _BASIC_TYPES = {"Plains": "W", "Island": "U", "Swamp": "B", "Mountain": "R", "Forest": "G"}
+# A mana ability's cost is "acceptable" for fixing if it's a tap, optionally with a
+# small generic ({0}/{1}) or a life payment (painland-style) — but not a big
+# generic, a sacrifice, or tapping a creature.
+_BAD_COST = re.compile(r"sacrifice|tap an|tap a |tap two|exile|discard|remove|\{[2-9]\}|\{1[0-9]\}")
 
 
-def reliable_colors(card):
-    """Colors a land produces *for general fixing* — not conditional/costly mana.
+def analyze_land_colors(card):
+    """Classify a land's color output into (reliable, conditional, condition).
 
-    Scryfall's ``produced_mana`` lists every color a land can make, even when it's
-    restricted ("Spend this mana only to cast a Hero spell") or gated behind a
-    cost ("{4}, {T}: Add ..."). Those lands (e.g. Avengers Tower, Castle Doom)
-    shouldn't read as 5-color fixing. We trust:
-      * colors from basic land subtypes (they tap freely), and
-      * colors from free ({T}-only), unrestricted "Add" abilities.
+    ``reliable``    — colors it makes for general fixing (free or {1}-cost taps,
+                      including "any color"/"choose a color" lands).
+    ``conditional`` — colors gated to a spell type ("Spend this mana only to cast
+                      a creature/Hero/artifact spell"); only real when the deck
+                      has enough of that type.
+    ``condition``   — the spell-type keyword for the conditional colors.
+
+    Scryfall's ``produced_mana`` over-reports (it lists every color a land *can*
+    make, however restricted/costly), so we parse the abilities instead.
     """
     produced = set(card.get("produced_mana") or []) & set("WUBRG")
-    if not produced:
-        return []
     type_line = card.get("type_line", "") or ""
+    if not produced:
+        return [], [], None
     if any(t in type_line for t in _BASIC_TYPES):
-        return sorted(produced)  # typed land (shock/dual/etc.) — genuine fixing
-    free = set()
+        return sorted(produced), [], None  # typed land — genuine fixing
+
+    reliable, conditional, condition = set(), set(), None
     for line in _oracle(card).split("\n"):
         low = line.lower()
         if "add" not in low or ":" not in line:
             continue
         cost = line.split(":", 1)[0].lower()
-        tap_only = "{t}" in cost and not re.search(r"\{\d|,|sacrifice|pay", cost)
-        if not tap_only or "spend this mana only" in low:
+        if "{t}" not in cost or _BAD_COST.search(cost):
             continue
-        if "any color" in low or "any combination" in low:
-            free |= set("WUBRG")
+        if "any color" in low or "any combination" in low or "any one color" in low or "chosen color" in low:
+            colors = set("WUBRG") & produced
         else:
-            free |= {s for s in "WUBRG" if "{" + s + "}" in line}
-    return sorted(free & produced)
-
-
-def conditional_fixing(card):
-    """For lands whose any-color mana is restricted to a spell type, return
-    ``(condColors, condition)`` — e.g. Avengers Tower -> (WUBRG, "hero"),
-    Castle Doom -> (WUBRG, "artifact"). These become real fixing only when the
-    deck has enough of that spell type. Cost-gated lands (no "spend this mana
-    only") aren't conditional fixing and return ([], None)."""
-    oracle = _oracle(card)
-    low = oracle.lower()
-    if "spend this mana only" not in low:
-        return [], None
-    if "any color" not in low and "any combination" not in low:
-        return [], None
-    produced = sorted(set(card.get("produced_mana") or []) & set("WUBRG"))
-    m = re.search(r"to cast (?:a|an) ([a-z]+) spell", low)
-    return produced, (m.group(1) if m else None)
+            colors = {s for s in "WUBRG" if "{" + s + "}" in line} & produced
+        if not colors:
+            continue
+        # "Spend this mana only to cast a creature spell" / "an instant or sorcery"
+        m = re.search(r"spend this mana only to cast (?:a |an )?([a-z]+(?: or [a-z]+)*)", low)
+        if m:
+            conditional |= colors
+            condition = condition or m.group(1).replace(" spell", "").strip()
+        else:
+            reliable |= colors
+    return sorted(reliable), sorted(conditional - reliable), condition
 
 
 def slim_land(card):
     uris = _uris(card)
-    cond_colors, condition = conditional_fixing(card)
+    reliable, cond_colors, condition = analyze_land_colors(card)
     out = {
         "name": card["name"],
         "type": card.get("type_line", ""),
         "rarity": card.get("rarity", ""),
-        "colors": reliable_colors(card),
+        "colors": reliable,
         "image": uris.get("small"),
         "image_hi": uris.get("normal"),
         "basic": land_mod.is_basic(card),

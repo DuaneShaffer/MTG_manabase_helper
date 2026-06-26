@@ -297,14 +297,19 @@ function applyConditions(cards, qtyByName) {
     if (isLandType(c.type)) continue;
     const t = (c.type || "").toLowerCase();
     const q = qtyByName[c.name] || 0;
-    for (const cond of state.conditionsPresent) if (t.includes(cond)) counts[cond] += q;
+    for (const cond of state.conditionsPresent) {
+      // a condition like "instant or sorcery" matches a card of either type
+      if (cond.split(" or ").some((p) => t.includes(p))) counts[cond] += q;
+    }
   }
   state.conditionsActive = new Set(
     [...state.conditionsPresent].filter((cond) => counts[cond] >= COND_THRESHOLD));
   // Set each conditional land's effective colors and refresh its tile.
   for (const land of state.lands) {
     if (!land.condition) continue;
-    const eff = state.conditionsActive.has(land.condition) ? (land.condColors || []) : land.baseColors;
+    const eff = state.conditionsActive.has(land.condition)
+      ? [...new Set([...land.baseColors, ...(land.condColors || [])])]
+      : land.baseColors;
     if ((land.colors || []).join() !== eff.join()) {
       land.colors = eff.slice();
       refreshTileDots(land);
