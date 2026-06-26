@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manabase — Standard source calculator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="wordmark" href="index.html" aria-label="Manabase — back to home" style="text-decoration:none;color:inherit">
+      <span class="pielet" aria-hidden="true">
+        <i data-c="W"></i><i data-c="U"></i><i data-c="B"></i><i data-c="R"></i><i data-c="G"></i>
+      </span>
+      <div class="wordmark-text">
+        <h1>Manabase</h1>
+        <p>Standard source calculator</p>
+      </div>
+    </a>
+    <div class="topbar-meta">
+      <span class="topbar-status" id="deckStatus">No deck loaded</span>
+      <span class="data-meta" id="dataMeta"></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel" id="panel">
+      <section class="deck-input">
+        <label for="deckText">Decklist</label>
+        <textarea id="deckText" spellcheck="false"
+          placeholder="Paste an Arena / MTGO decklist — or drop a .txt file here&#10;e.g.  4 Adarkar Wastes (DMU) 243"></textarea>
+        <div class="deck-actions">
+          <button class="btn btn-gold" id="analyzeBtn">Analyze deck</button>
+          <button class="btn btn-ghost" id="exampleBtn">Load example</button>
+        </div>
+        <div class="confidence">
+          <label for="confSel">Target confidence</label>
+          <select id="confSel">
+            <option value="">Karsten — on curve (89 + MV)%</option>
+            <option value="0.90">Flat 90%</option>
+            <option value="0.95">Flat 95%</option>
+            <option value="0.99">Flat 99%</option>
+          </select>
+        </div>
+        <p class="hint" id="deckHint"></p>
+      </section>
+
+      <section class="dashboard">
+        <h2>Mana sources</h2>
+        <p class="dash-empty" id="dashEmpty">Paste a deck and these pips ignite as each color's sources are covered.</p>
+        <div class="colors" id="colors"></div>
+        <div class="total-row">
+          <span>Lands in build</span>
+          <span class="total-num" id="totalLands">0</span>
+        </div>
+        <div class="rec-target-row" id="recTargetRow" hidden>
+          <span>Recommended
+            <button class="info-dot" id="landWhy" aria-label="How the recommended land count is derived" aria-expanded="false">i</button>
+          </span>
+          <span class="rec-target-num" id="recTarget">—</span>
+        </div>
+        <p class="why-note" id="landWhyNote" hidden></p>
+
+        <!-- Sticky grade HUD: the overall grade follows you as you edit lands -->
+        <div class="hud-grade" id="hudGrade" hidden>
+          <div class="overall" id="overallGrade">
+            <span class="og-letter"></span>
+            <span class="og-text"></span>
+          </div>
+          <div class="grade-legend" aria-label="Grade scale (chance the colors are ready on curve)">
+            <span class="gl" data-g="A">A</span><span class="gl-n">95+</span>
+            <span class="gl" data-g="B">B</span><span class="gl-n">90</span>
+            <span class="gl" data-g="C">C</span><span class="gl-n">80</span>
+            <span class="gl" data-g="D">D</span><span class="gl-n">65</span>
+            <span class="gl" data-g="F">F</span><span class="gl-n">&lt;65</span>
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <section class="grid-wrap">
+      <section class="deck-strip" id="deckStrip" hidden>
+        <div class="strip-head">
+          <div class="strip-headline">
+            <span class="strip-title">Your deck — castability on curve</span>
+            <button class="info-dot" id="gradeInfo" aria-label="How grades work" aria-expanded="false">i</button>
+          </div>
+          <!-- Command center: Build it · Test it · Export it -->
+          <div class="deck-cmd">
+            <button class="btn btn-gold" id="recommendBtn" disabled>Build manabase</button>
+            <button class="btn btn-ghost sim-btn" id="simBtn"
+              title="Play out thousands of real games (shuffle, mulligan, draw) and report true on-curve castability — this one DOES account for mana screw and flood.">Simulate</button>
+            <button class="btn btn-ghost" id="exportBtn" disabled>Export</button>
+          </div>
+        </div>
+        <p class="grade-note" id="gradeNote" hidden>
+          Each card carries two readings. The <strong>badge</strong> (bottom-right, a letter +
+          %) is the <strong>model</strong> grade: the chance the right <strong>colors</strong> are
+          available by the turn you'd cast the card, assuming you keep an opener and hit your land
+          drops (Frank Karsten's model) — so it tops out at 99%, never a guaranteed 100%, and
+          climbs as you add lands. It does <strong>not</strong> model raw mana screw or flood. Press
+          <strong>Simulate</strong> and a second pill (bottom-left) appears: the <strong>sim</strong>
+          grade plays out thousands of real games and reports true on-curve castability, screw
+          included. The land-count target is your safeguard against flood.
+        </p>
+        <div class="spell-grid" id="spellGrid"></div>
+      </section>
+
+      <div class="grid-head">
+        <span id="gridCount">Loading lands…</span>
+        <div class="grid-controls">
+          <div class="seg" id="landMode" role="group" aria-label="Which lands to show">
+            <button class="seg-btn" data-mode="relevant">Relevant</button>
+            <button class="seg-btn" data-mode="mycolors">My colors</button>
+            <button class="seg-btn" data-mode="utility">Utility</button>
+            <button class="seg-btn on" data-mode="all">All</button>
+          </div>
+          <button class="chip" id="raresToggle">Rares only</button>
+          <button class="chip chip-guide" id="suggestToggle" disabled
+            title="Glow the lands that supply a color you're still short on — guidance, not a filter.">Highlight fixers</button>
+          <input type="search" id="searchBox" placeholder="Search lands…" autocomplete="off">
+          <select id="sortSel" aria-label="Sort lands">
+            <option value="name">Sort: name</option>
+            <option value="color">Sort: color</option>
+            <option value="fixing">Sort: fixing</option>
+          </select>
+        </div>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div class="empty" id="gridEmpty" hidden></div>
+    </section>
+  </main>
+
+  <!-- Recommendation drawer -->
+  <div class="drawer" id="recDrawer" role="dialog" aria-modal="true" aria-labelledby="recTitle" hidden>
+    <div class="drawer-card">
+      <div class="drawer-head">
+        <h2 id="recTitle">Recommended manabase</h2>
+        <button class="icon-btn" id="recClose" aria-label="Close">×</button>
+      </div>
+      <p class="drawer-sub" id="recSummary"></p>
+      <div class="rec-list" id="recList"></div>
+      <div class="drawer-foot">
+        <button class="btn btn-gold" id="recApply">Apply to build</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export modal -->
+  <div class="drawer" id="exportModal" role="dialog" aria-modal="true" aria-labelledby="exportTitle" hidden>
+    <div class="drawer-card">
+      <div class="drawer-head">
+        <h2 id="exportTitle">Export decklist</h2>
+        <button class="icon-btn" id="exportClose" aria-label="Close">×</button>
+      </div>
+      <p class="drawer-sub" id="exportCopied"></p>
+      <textarea id="exportText" class="export-text" spellcheck="false" readonly></textarea>
+    </div>
+  </div>
+
+  <!-- Floating card preview (hover over recommendation rows) -->
+  <div class="card-preview" id="cardPreview" hidden><img alt=""></div>
+
+  <!-- Tweak popover for draw/ramp cards -->
+  <div class="smooth-pop" id="smoothPop" hidden>
+    <div class="sp-title" id="smoothPopTitle"></div>
+    <div class="sp-row">
+      <span id="smoothPopLabel">Count as draw/ramp</span>
+      <div class="sp-stepper">
+        <button class="step-btn" id="smoothMinus">−</button>
+        <span id="smoothCountVal">0</span>
+        <button class="step-btn" id="smoothPlus">+</button>
+      </div>
+    </div>
+    <div class="sp-of" id="smoothOf"></div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
