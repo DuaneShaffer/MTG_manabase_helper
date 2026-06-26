@@ -34,6 +34,61 @@ const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.cla
 // A land if "Land" is among its card types (left of the subtype dash).
 const isLandType = (type) => (type || "").split("—")[0].includes("Land");
 
+const idle = (fn) =>
+  (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 1500 }) : setTimeout(() => fn(null), 150));
+
+// Progressive image sharpening: thumbnails (small) load first; hi-res upgrades
+// adapt to the connection. Fast links sharpen everything in the background; slow
+// links (or Data Saver) only sharpen what you scroll/hover to. Hover always works.
+const sharpen = {
+  mode: null,        // "hover" | "scroll" | "eager"
+  io: null,
+  pending: [],
+  init() {
+    if (this.mode) return;
+    const c = navigator.connection || {};
+    if (!("IntersectionObserver" in window) || c.saveData) this.mode = "hover";
+    else if (c.effectiveType === "2g" || c.effectiveType === "slow-2g") this.mode = "hover";
+    else if (c.effectiveType === "4g") this.mode = "eager";
+    else this.mode = "scroll";  // 3g or unknown: sharpen on scroll, no bulk prefetch
+    if (this.mode !== "hover") {
+      this.io = new IntersectionObserver((entries) => {
+        for (const e of entries) if (e.isIntersecting) { this.upgrade(e.target); this.io.unobserve(e.target); }
+      }, { rootMargin: this.mode === "eager" ? "800px" : "250px" });
+    }
+  },
+  register(img) {
+    this.init();
+    if (this.mode === "hover") return;
+    this.io.observe(img);
+    if (this.mode === "eager") this.pending.push(img);
+  },
+  upgrade(img) {
+    if (img.dataset.hi || !img.dataset.hiUrl) return;
+    img.dataset.hi = "1";
+    img.src = img.dataset.hiUrl;
+  },
+  // Background-fill the rest, keeping at most a few hi-res fetches in flight so a
+  // weak link is never saturated (each finishes before the next starts).
+  backfill() {
+    if (this.mode !== "eager") return;
+    let inflight = 0;
+    const MAX = 4;
+    const pump = () => {
+      while (inflight < MAX && this.pending.length) {
+        const img = this.pending.shift();
+        if (img.dataset.hi) continue;
+        inflight++;
+        const done = () => { inflight--; pump(); };
+        img.addEventListener("load", done, { once: true });
+        img.addEventListener("error", done, { once: true });
+        this.upgrade(img);
+      }
+    };
+    idle(pump);
+  },
+};
+
 /* ---------- tally ---------- */
 function tally() {
   const t = { W: 0, U: 0, B: 0, R: 0, G: 0, total: 0 };
@@ -96,11 +151,12 @@ function tileFor(land) {
   img.alt = land.name; img.loading = "lazy"; img.decoding = "async";
   img.addEventListener("load", () => img.classList.add("loaded"));
   if (land.image) img.src = land.image;
+  // Progressive sharpening: hover always upgrades; the sharpener also upgrades on
+  // scroll / in the background depending on the connection.
   if (land.image_hi && land.image_hi !== land.image) {
-    tile.addEventListener("mouseenter", () => {
-      if (img.dataset.hi) return;
-      img.dataset.hi = "1"; img.src = land.image_hi;
-    }, { once: true });
+    img.dataset.hiUrl = land.image_hi;
+    tile.addEventListener("mouseenter", () => sharpen.upgrade(img), { once: true });
+    sharpen.register(img);
   }
   const stepper = el("div", "stepper");
   const minus = el("button", "step-btn"); minus.textContent = "−";
@@ -128,6 +184,7 @@ function buildGrid() {
   applySort();
   applyVisibility();
   markFixers();
+  sharpen.backfill();  // on fast connections, fill in hi-res art in the background
 }
 
 function deckColors() {
@@ -247,12 +304,18 @@ async function analyzeDeck() {
       if (cols.length) {
         const pips = {};
         for (const col of cols) pips[col] = cons[col].pips;
-        state.spells.push({ name: c.name, image: c.image, qty: qtyByName[c.name] || 1, mv, gold: cols.length > 1, pips });
+        state.spells.push({ name: c.name, image: c.image, qty: qtyByName[c.name] || 1, mv, gold: cols.length > 1, pips, smooth: !!c.smooth });
       }
     }
     const avg = state.deckCards.length
       ? state.deckCards.reduce((s, c) => s + c.mv, 0) / state.deckCards.length : 3;
-    state.landTarget = recommendLandCount(avg, state.deckSize);
+    // Count cheap card-draw / ramp / dig copies — they let you run fewer lands.
+    let smoothCount = 0;
+    for (const c of cards) {
+      if (c.smooth && !isLandType(c.type)) smoothCount += qtyByName[c.name] || 0;
+    }
+    state.smoothCount = smoothCount;
+    state.landTarget = recommendLandCount(avg, state.deckSize, smoothCount);
 
     // Load the deck's own lands into the build so the dashboard + grades reflect
     // your actual manabase. Only when the deck text itself changes, so toggling
@@ -284,6 +347,11 @@ async function analyzeDeck() {
     const colors = COLORS.filter((c) => state.requirements[c] > 0).map((c) => COLOR_NAMES[c]);
     const parts = [colors.length ? `Needs ${colors.join(", ")} sources.` : "No colored requirements found."];
     if (loadedLands) parts.push(`Loaded ${loadedLands} lands from your deck.`);
+    if (smoothCount) {
+      const delta = recommendLandCount(avg, state.deckSize, 0) - state.landTarget;
+      parts.push(`${smoothCount} draw/ramp cards (↻)` +
+        (delta > 0 ? ` trim ~${delta} land${delta === 1 ? "" : "s"} off the target.` : ` factored into the target.`));
+    }
     if (landsOutsidePool) parts.push(`${landsOutsidePool} land(s) not in the Standard pool.`);
     if (missing.length) parts.push(`${missing.length} card(s) not found.`);
     hint.className = "hint";
@@ -308,9 +376,18 @@ function renderSpellStrip() {
     img.addEventListener("load", () => img.classList.add("loaded"));
     if (spell.image) img.src = spell.image;
     const qty = el("span", "qty"); qty.textContent = spell.qty + "×";
-    const badge = el("div", "badge");
+    const badge = el("div", "badge");           // static (Karsten) grade — bottom-right
     badge.innerHTML = `<span class="bl">–</span><span class="bp"></span>`;
-    cell.append(ph, img, qty, badge);
+    const simPill = el("div", "sim-pill");      // simulated grade — bottom-left, after Simulate
+    simPill.hidden = true;
+    simPill.innerHTML = `sim <span class="sp-p"></span>`;
+    cell.append(ph, img, qty, badge, simPill);
+    if (spell.smooth) {                          // card draw / ramp — affects land count
+      const tag = el("div", "smooth-tag");
+      tag.textContent = "↻";
+      tag.title = "Card draw / ramp — smooths your draws, so the recommended land count is a bit lower.";
+      cell.appendChild(tag);
+    }
     grid.appendChild(cell);
     state.spellCells.set(spell.name, cell);
   }
@@ -344,15 +421,17 @@ function doGrade() {
       cell.dataset.g = g.letter;
       cell.querySelector(".bl").textContent = g.letter;
       cell.querySelector(".bp").textContent = pct(prob);
+      cell.querySelector(".sim-pill").hidden = true;  // sim is stale once the build changes
     }
     worst = Math.min(worst, prob);
   }
+  state.staticWorst = worst;
   const og = $("#overallGrade");
   const g = grade(worst);
   og.hidden = false;
   og.querySelector(".og-letter").textContent = g.letter;
   og.querySelector(".og-letter").style.background = `var(--grade-${g.letter})`;
-  og.querySelector(".og-text").textContent = `Weakest card ${pct(worst)} — ${g.label}`;
+  og.querySelector(".og-text").textContent = `Weakest card ${pct(worst)} — ${g.label} · Simulate for true odds`;
 }
 
 // Display percentage, capped at 99% — the closed-form model conditions on hitting
@@ -365,7 +444,8 @@ function pct(p) {
 /* ---------- Monte-Carlo validator (on demand; includes mana screw) ---------- */
 function runSimulation() {
   if (!state.spells.length) return;
-  clearTimeout(_gradeTimer);  // don't let a pending closed-form refresh clobber the sim
+  clearTimeout(_gradeTimer);  // cancel the debounce…
+  doGrade();                  // …and refresh the static grades now, so both are shown
   const btn = $("#simBtn");
   btn.disabled = true;
   btn.textContent = "Simulating…";
@@ -377,23 +457,28 @@ function runSimulation() {
       if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, count: c });
     }
     const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000 });
+    // Populate the simulated pill on each card — the static badge stays as-is, so
+    // both numbers are visible side by side.
     for (const spell of state.spells) {
-      const g = grade(res.bySpell[spell.name]);
+      const p = res.bySpell[spell.name];
+      const g = grade(p);
       const cell = state.spellCells.get(spell.name);
-      if (cell) {
-        cell.dataset.g = g.letter;
-        cell.querySelector(".bl").textContent = g.letter;
-        cell.querySelector(".bp").textContent = pct(res.bySpell[spell.name]);
-      }
+      if (!cell) continue;
+      const pill = cell.querySelector(".sim-pill");
+      pill.dataset.g = g.letter;
+      pill.querySelector(".sp-p").textContent = pct(p);
+      pill.hidden = false;
     }
-    const g = grade(res.overall);
+    // Overall: show static (assumes lands) alongside simulated (includes screw).
     const og = $("#overallGrade");
+    const sg = grade(res.overall);
     og.hidden = false;
-    og.querySelector(".og-letter").textContent = g.letter;
-    og.querySelector(".og-letter").style.background = `var(--grade-${g.letter})`;
+    og.querySelector(".og-letter").textContent = sg.letter;
+    og.querySelector(".og-letter").style.background = `var(--grade-${sg.letter})`;
     og.querySelector(".og-text").textContent =
-      `Weakest ${pct(res.overall)} — simulated, ${(res.trials / 1000)}k games (incl. screw)`;
-    btn.textContent = "Simulate";
+      `Weakest: ${pct(state.staticWorst != null ? state.staticWorst : res.overall)} static · ` +
+      `${pct(res.overall)} simulated (${res.trials / 1000}k games, incl. screw)`;
+    btn.textContent = "Re-simulate";
     btn.disabled = false;
   }, 20);
 }

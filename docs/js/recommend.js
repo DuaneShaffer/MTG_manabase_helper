@@ -7,12 +7,14 @@ import { COLORS } from "./colors.js";
 
 const NONBASIC_MAX = 4; // singleton/playset rule for non-basic lands
 
-// Recommend a land count from an average mana value using the Karsten curve.
-//   base = 3.14 * avgMV + 16, scaled by deckSize/60, rounded, then clamped to
-//   [round(16*deckSize/60), round(28*deckSize/60)].
-export function recommendLandCount(avgMV, deckSize = 60) {
+// Recommend a land count from the deck's average mana value, using Karsten's
+// draw/ramp-aware regression:
+//   base = 19.59 + 1.90 * avgMV - 0.28 * smoothCount
+// where smoothCount is the number of cheap card-draw / ramp / dig spells (each
+// lets you run slightly fewer lands). Scaled by deckSize/60 and clamped.
+export function recommendLandCount(avgMV, deckSize = 60, smoothCount = 0) {
   const scale = deckSize / 60;
-  const base = (3.14 * avgMV + 16) * scale;
+  const base = (19.59 + 1.90 * avgMV - 0.28 * smoothCount) * scale;
   const lo = Math.round(16 * scale);
   const hi = Math.round(28 * scale);
   return Math.min(hi, Math.max(lo, Math.round(base)));

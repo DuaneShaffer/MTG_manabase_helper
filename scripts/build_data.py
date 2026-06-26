@@ -61,6 +61,25 @@ def slim_land(card):
     }
 
 
+def _smooths(card):
+    """Cheap card-draw / ramp that smooths your draws (Karsten's land-count input).
+
+    True for low-mana-value cards that draw, dig (scry/surveil), tutor a land, or
+    ramp (a nonland that taps for mana). Used to shave the recommended land count.
+    """
+    if (card.get("cmc", 0) or 0) > 3:
+        return False
+    type_line = card.get("type_line", "") or ""
+    oracle = _oracle(card).lower()
+    if "Land" not in type_line.split("—")[0] and card.get("produced_mana"):
+        return True  # mana dork / rock
+    if "search your library for" in oracle and "land" in oracle:
+        return True  # cheap land ramp / fetch
+    # card draw / selection, across the common phrasings
+    SIGNALS = ("draw", "scry", "surveil", "look at the top", "into your hand")
+    return any(s in oracle for s in SIGNALS)
+
+
 def slim_card(card):
     cost = card.get("mana_cost") or ""
     if not cost and card.get("card_faces"):
@@ -70,6 +89,7 @@ def slim_card(card):
         "cost": cost,
         "type": card.get("type_line", ""),
         "image": _uris(card).get("small"),
+        "smooth": _smooths(card),
     }
 
 
