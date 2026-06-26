@@ -80,6 +80,25 @@ test("prefers untapped dual over tapped dual", () => {
   assert.strictEqual(r.counts["WU-tapped"], undefined);
 });
 
+test("prefers a focused dual over a rainbow land", () => {
+  // A 2-color (W/U) deck should build with the WU dual, not a 5-color land
+  // that wastes three off-colors — even though both "cover" W and U.
+  const wu = { name: "WU dual", colors: ["W", "U"], basic: false, tapped: false };
+  const rainbow = { name: "Rainbow", colors: ["W", "U", "B", "R", "G"], basic: false, tapped: false };
+  const r = recommend({ W: 4, U: 4 }, [rainbow, wu]);
+  assert.strictEqual(r.counts["WU dual"], 4);
+  assert.strictEqual(r.counts["Rainbow"], undefined);
+});
+
+test("recommendation is deterministic regardless of pool order", () => {
+  const a = { name: "Aaa dual", colors: ["W", "U"], basic: false, tapped: false };
+  const z = { name: "Zzz dual", colors: ["W", "U"], basic: false, tapped: false };
+  const r1 = recommend({ W: 4, U: 4 }, [a, z]);
+  const r2 = recommend({ W: 4, U: 4 }, [z, a]);
+  assert.deepStrictEqual(r1.counts, r2.counts);
+  assert.strictEqual(r1.counts["Aaa dual"], 4); // name-sorted tiebreak
+});
+
 test("landTarget tops up with basics past the needed count", () => {
   const r = recommend({ W: 4 }, [plains], { landTarget: 10 });
   assert.strictEqual(r.total, 10);

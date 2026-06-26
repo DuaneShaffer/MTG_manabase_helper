@@ -41,18 +41,26 @@ def _enters_tapped(oracle):
     Shock lands ("you may pay 2 life... it enters tapped"), check/fast/slow lands
     ("enters tapped unless...") are conditionally untapped, so we don't flag them
     — only lands that always enter tapped (surveil/gain lands, etc.).
+
+    The conditional keywords are scoped to the *sentence* that says it enters
+    tapped, so an unrelated "unless"/"pay" elsewhere (e.g. a sacrifice drawback
+    like Command Bridge's) doesn't wrongly mark an always-tapped land as untapped.
     """
-    if "enters tapped" not in oracle and "enters the battlefield tapped" not in oracle:
-        return False
-    conditional = any(kw in oracle for kw in ("unless", "you may pay", "if you don"))
-    return not conditional
+    for sentence in re.split(r"[.\n]", oracle):
+        if "enters tapped" in sentence or "enters the battlefield tapped" in sentence:
+            conditional = any(kw in sentence for kw in ("unless", "you may pay", "if you don"))
+            return not conditional
+    return False
 
 
 _BASIC_TYPES = {"Plains": "W", "Island": "U", "Swamp": "B", "Mountain": "R", "Forest": "G"}
-# A mana ability's cost is "acceptable" for fixing if it's a tap, optionally with a
-# small generic ({0}/{1}) or a life payment (painland-style) — but not a big
-# generic, a sacrifice, or tapping a creature.
-_BAD_COST = re.compile(r"sacrifice|tap an|tap a |tap two|exile|discard|remove|\{[2-9]\}|\{1[0-9]\}")
+# A mana ability's cost is "acceptable" for fixing if it's a bare tap or a tap with
+# a life payment (painland-style: "{T}, Pay 1 life: Add any color"). It is NOT
+# acceptable if it costs *generic mana* — a "{1},{T}: Add any color" filter doesn't
+# give you a usable colored source for casting on curve (it just converts mana you
+# already have), so such lands must not count as colored fixing. Also reject
+# sacrifice / exile / discard / tap-another-permanent costs.
+_BAD_COST = re.compile(r"sacrifice|tap an|tap a |tap two|exile|discard|remove|\{\d+\}")
 
 
 def analyze_land_colors(card):

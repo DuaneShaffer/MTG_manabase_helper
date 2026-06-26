@@ -26,6 +26,14 @@ function landColors(land) {
   return COLORS.filter((c) => produced.includes(c));
 }
 
+// Lexicographic "a beats b" over equal-length numeric key arrays (higher wins).
+function keyGreater(a, b) {
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return a[i] > b[i];
+  }
+  return false;
+}
+
 // Recommend land counts to satisfy per-color source `requirements`.
 //
 // requirements: object over WUBRG of needed sources.
@@ -63,9 +71,14 @@ export function recommend(requirements, lands, opts = {}) {
         colors,
         basic: !!land.basic,
         tapped: !!land.tapped,
+        // colors this land makes that the deck doesn't need — extra colors are
+        // wasted fixing, so among equal coverage we prefer the focused land.
+        off: colors.reduce((n, c) => n + (needed.has(c) ? 0 : 1), 0),
       });
     }
   }
+  // Stable, name-sorted so ties resolve deterministically (not by pool order).
+  pool.sort((a, b) => a.name.localeCompare(b.name));
 
   // Score a candidate by the number of still-deficit colors it produces.
   const scoreOf = (cand) => cand.colors.reduce((n, c) => n + (remaining[c] > 0 ? 1 : 0), 0);
@@ -86,9 +99,10 @@ export function recommend(requirements, lands, opts = {}) {
     }
 
     let best = null;
-    // key: [deficit colors covered, untapped (1) over tapped (0), nonbasic (1)
-    // over basic (0)]. Higher wins lexicographically.
-    let bestKey = [0, 0, 0];
+    // key: [deficit colors covered, untapped (1) over tapped (0), fewer off-colors
+    // (−off, so 0 wasted colors wins), nonbasic (1) over basic (0)]. Higher wins
+    // lexicographically; ties fall to the name-sorted pool order above.
+    let bestKey = null;
 
     for (const cand of pool) {
       if (!cand.basic && (counts[cand.name] || 0) >= NONBASIC_MAX) continue;
@@ -101,13 +115,8 @@ export function recommend(requirements, lands, opts = {}) {
         if (bestUntappedScore >= score) continue;
       }
 
-      const key = [score, cand.tapped ? 0 : 1, cand.basic ? 0 : 1];
-      if (
-        key[0] > bestKey[0] ||
-        (key[0] === bestKey[0] &&
-          (key[1] > bestKey[1] ||
-            (key[1] === bestKey[1] && key[2] > bestKey[2])))
-      ) {
+      const key = [score, cand.tapped ? 0 : 1, -cand.off, cand.basic ? 0 : 1];
+      if (best === null || keyGreater(key, bestKey)) {
         bestKey = key;
         best = cand;
       }

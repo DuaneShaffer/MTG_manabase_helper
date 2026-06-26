@@ -266,6 +266,23 @@ def test_recommender_prefers_duals_over_basics():
     assert rec["total"] == 4
 
 
+def test_recommender_prefers_focused_dual_over_rainbow():
+    # A 2-color deck should pick the W/U dual, not a 5-color land that wastes
+    # three off-colors, even though both "cover" W and U.
+    dual = {"name": "WU Dual", "produced_mana": ["W", "U"], "type_line": "Land"}
+    rainbow = {"name": "Rainbow", "produced_mana": ["W", "U", "B", "R", "G"], "type_line": "Land"}
+    rec = recommend.recommend({"W": 4, "U": 4, "B": 0, "R": 0, "G": 0}, [rainbow, dual])
+    assert rec["counts"].get("WU Dual", 0) == 4
+    assert "Rainbow" not in rec["counts"]
+
+
+def test_recommender_is_deterministic_regardless_of_order():
+    a = {"name": "Aaa Dual", "produced_mana": ["W", "U"], "type_line": "Land"}
+    z = {"name": "Zzz Dual", "produced_mana": ["W", "U"], "type_line": "Land"}
+    req = {"W": 4, "U": 4, "B": 0, "R": 0, "G": 0}
+    assert recommend.recommend(req, [a, z])["counts"] == recommend.recommend(req, [z, a])["counts"]
+
+
 def test_recommender_reports_shortfall_under_cap():
     plains = {"name": "Plains", "produced_mana": ["W"], "type_line": "Basic Land — Plains"}
     rec = recommend.recommend({"W": 10, "U": 0, "B": 0, "R": 0, "G": 0},

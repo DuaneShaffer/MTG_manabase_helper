@@ -41,20 +41,24 @@ def recommend(requirements, lands, max_lands=None):
     chosen = {}
 
     # Candidate pool: lands that produce at least one needed color, each tagged
-    # with the colors it makes and whether it's a basic (unlimited copies).
+    # with the colors it makes, whether it's a basic (unlimited copies), and how
+    # many *off-colors* it makes (colors the deck doesn't need — wasted fixing).
     pool = []
     for card in lands:
-        colors = produced_colors(card) & needed
-        if colors:
-            pool.append((card, produced_colors(card), is_basic(card)))
+        produced = produced_colors(card)
+        if produced & needed:
+            off = len(produced - needed)
+            pool.append((card, produced, is_basic(card), off))
+    # Name-sorted so ties resolve deterministically (not by input order).
+    pool.sort(key=lambda t: t[0]["name"])
 
     total = 0
     while any(remaining[c] > 0 for c in COLORS):
         if max_lands is not None and total >= max_lands:
             break
         best = None
-        best_key = (0, 0)  # (deficit colors covered, prefer non-basic for fixing)
-        for card, colors, basic in pool:
+        best_key = None
+        for card, colors, basic, off in pool:
             name = card["name"]
             # Use .get so probing the cap doesn't create a 0-count entry in the
             # defaultdict (which would pollute the returned counts).
@@ -63,10 +67,11 @@ def recommend(requirements, lands, max_lands=None):
             covered = sum(1 for c in colors if remaining[c] > 0)
             if covered == 0:
                 continue
-            # Prefer cards covering more deficits; tie-break toward non-basics
-            # (they're the fixing that basics can't replace).
-            key = (covered, 0 if basic else 1)
-            if key > best_key:
+            # Prefer cards covering more deficits, then fewer wasted off-colors
+            # (a focused dual over a rainbow land), then non-basics (the fixing
+            # basics can't replace).
+            key = (covered, -off, 0 if basic else 1)
+            if best_key is None or key > best_key:
                 best_key = key
                 best = (card, colors)
         if best is None:
