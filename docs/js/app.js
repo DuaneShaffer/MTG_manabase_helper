@@ -3,6 +3,7 @@ import { costConstraints, manaValue } from "./mana.js";
 import { requirementsForCards } from "./requirements.js";
 import { castableProbability, multivariateCastable, grade } from "./hypergeometric.js";
 import { recommend as recommendManabase, recommendLandCount } from "./recommend.js";
+import { simulateDeck } from "./montecarlo.js";
 import { parseDeckText, deckEntries, cardNames } from "./decklist.js";
 import { loadLands, loadMeta, resolveDeck, loadExampleDeck } from "./data.js";
 
@@ -354,10 +355,47 @@ function doGrade() {
   og.querySelector(".og-text").textContent = `Weakest card ${pct(worst)} — ${g.label}`;
 }
 
-// Display percentage, capped at 99% — the model conditions on hitting your land
-// drops (it measures colour reliability, not raw mana screw), so nothing is 100%.
+// Display percentage, capped at 99% — the closed-form model conditions on hitting
+// your land drops (it measures colour reliability, not raw mana screw), so nothing
+// is 100%. The simulator is also capped for consistency.
 function pct(p) {
   return Math.min(99, Math.round(p * 100)) + "%";
+}
+
+/* ---------- Monte-Carlo validator (on demand; includes mana screw) ---------- */
+function runSimulation() {
+  if (!state.spells.length) return;
+  clearTimeout(_gradeTimer);  // don't let a pending closed-form refresh clobber the sim
+  const btn = $("#simBtn");
+  btn.disabled = true;
+  btn.textContent = "Simulating…";
+  // Defer so the button label paints before the (synchronous) sim runs.
+  setTimeout(() => {
+    const lands = [];
+    for (const { land } of state.tiles.values()) {
+      const c = state.counts[land.name] || 0;
+      if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, count: c });
+    }
+    const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000 });
+    for (const spell of state.spells) {
+      const g = grade(res.bySpell[spell.name]);
+      const cell = state.spellCells.get(spell.name);
+      if (cell) {
+        cell.dataset.g = g.letter;
+        cell.querySelector(".bl").textContent = g.letter;
+        cell.querySelector(".bp").textContent = pct(res.bySpell[spell.name]);
+      }
+    }
+    const g = grade(res.overall);
+    const og = $("#overallGrade");
+    og.hidden = false;
+    og.querySelector(".og-letter").textContent = g.letter;
+    og.querySelector(".og-letter").style.background = `var(--grade-${g.letter})`;
+    og.querySelector(".og-text").textContent =
+      `Weakest ${pct(res.overall)} — simulated, ${(res.trials / 1000)}k games (incl. screw)`;
+    btn.textContent = "Simulate";
+    btn.disabled = false;
+  }, 20);
 }
 
 /* ---------- recommendation (local) ---------- */
@@ -475,6 +513,12 @@ function wireEvents() {
   $("#landMode").addEventListener("click", (e) => {
     const btn = e.target.closest(".seg-btn");
     if (btn) setLandMode(btn.dataset.mode);
+  });
+  $("#simBtn").addEventListener("click", runSimulation);
+  $("#gradeInfo").addEventListener("click", (e) => {
+    const note = $("#gradeNote");
+    note.hidden = !note.hidden;
+    e.currentTarget.setAttribute("aria-expanded", String(!note.hidden));
   });
   $("#confSel").addEventListener("change", (e) => {
     state.threshold = e.target.value ? parseFloat(e.target.value) : null;

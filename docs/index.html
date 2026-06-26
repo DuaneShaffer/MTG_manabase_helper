@@ -70,15 +70,27 @@
     <section class="grid-wrap">
       <section class="deck-strip" id="deckStrip" hidden>
         <div class="strip-head">
-          <div>
+          <div class="strip-headline">
             <span class="strip-title">Your deck — castability on curve</span>
-            <span class="strip-sub" title="Each grade is the chance the right COLORS are available by the turn you'd cast the card, assuming you keep an opening hand and hit your land drops (Frank Karsten's model). It does NOT model raw mana screw or flood — that's what the land-count target is for. So grades top out at 99%, never a guaranteed 100%.">odds of the right colors on curve — assumes you keep enough lands (ⓘ)</span>
+            <button class="info-dot" id="gradeInfo" aria-label="How grades work" aria-expanded="false">i</button>
           </div>
-          <div class="overall" id="overallGrade" hidden>
-            <span class="og-letter"></span>
-            <span class="og-text"></span>
+          <div class="strip-right">
+            <button class="btn btn-ghost sim-btn" id="simBtn"
+              title="Play out thousands of real games (shuffle, mulligan, draw) and report true on-curve castability — this one DOES account for mana screw and flood.">Simulate</button>
+            <div class="overall" id="overallGrade" hidden>
+              <span class="og-letter"></span>
+              <span class="og-text"></span>
+            </div>
           </div>
         </div>
+        <p class="grade-note" id="gradeNote" hidden>
+          Each grade is the chance the right <strong>colors</strong> are available by the turn
+          you'd cast the card, assuming you keep an opener and hit your land drops (Frank
+          Karsten's model) — so grades top out at 99%, never a guaranteed 100%, and climb as you
+          add lands. It does <strong>not</strong> model raw mana screw or flood; that's what the
+          land-count target and <strong>Simulate</strong> are for. <strong>Simulate</strong> plays
+          out thousands of real games and reports the true on-curve castability, screw included.
+        </p>
         <div class="spell-grid" id="spellGrid"></div>
       </section>
 
