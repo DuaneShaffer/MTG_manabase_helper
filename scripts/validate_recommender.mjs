@@ -1,10 +1,10 @@
-// Validate the land RECOMMENDER against real metagame decks.
+// Validate the land RECOMMENDERS against real metagame decks.
 //
-// For each fixture deck, runs recommend() on the full land pool and on a pool with
-// the just-released wave removed (release >= NEW_WAVE), and compares both to the
-// pros' actual nonbasic lands. Surfaces two things:
-//   - how many brand-new-set lands the recommender reaches for, and
-//   - how closely its nonbasic picks resemble real manabases (Jaccard).
+// Compares every recommender heuristic the app ships — the greedy recommend()
+// and the ILP optimizer's objectives (most-untapped / fewest-tapped / fewest-
+// total) — to the pros' actual nonbasic lands. For each method it reports:
+//   - nonbasic Jaccard vs the pro list (overlap of fixing choices), and
+//   - how many brand-new-set lands it reaches for.
 //
 // Release dates come from tests/fixtures/land_sets.json (a committed Scryfall
 // snapshot). Regenerate that cache if the land pool changes substantially.
@@ -20,9 +20,17 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..")
 const JS = path.join(ROOT, "docs/js");
 const DATA = path.join(ROOT, "docs/data");
 
+// Load the vendored browser solver into globalThis.solver so optimize.js's
+// loadSolver() finds it without a DOM (same shim the optimizer's tests use).
+const bundle = fs.readFileSync(path.join(JS, "vendor/lp-solver.js"), "utf8")
+  .replace(/^\/\* jsLPSolver[\s\S]*?\*\/\n/, "");
+globalThis.window = globalThis;
+(0, eval)(bundle);
+
 const { parseDeckText, deckEntries, cardNames } = await import(path.join(JS, "decklist.js"));
 const { requirementsForCards } = await import(path.join(JS, "requirements.js"));
 const { recommend, recommendLandCount } = await import(path.join(JS, "recommend.js"));
+const { optimizeManabase, OBJECTIVES } = await import(path.join(JS, "optimize.js"));
 const { manaValue } = await import(path.join(JS, "mana.js"));
 
 const cards = JSON.parse(fs.readFileSync(path.join(DATA, "cards.json"), "utf8"));
@@ -31,15 +39,13 @@ const landByName = new Map(landsArr.map((l) => [l.name.toLowerCase(), l]));
 const DECKS = JSON.parse(fs.readFileSync(path.join(ROOT, "tests/fixtures/meta_decks.json"), "utf8"));
 const landSets = JSON.parse(fs.readFileSync(path.join(ROOT, "tests/fixtures/land_sets.json"), "utf8"));
 
-const NEW_WAVE = new Date("2026-06-26"); // the most recent set as of the fixtures
+const NEW_WAVE = new Date("2026-06-26");
 const SMOOTH_MAX_MV = 2;
 const isLandType = (type) => (type || "").split("—")[0].includes("Land");
-const setOf = (name) => landSets[name]?.set || "?";
 const isNewWave = (name) => {
   const rel = landSets[name]?.released_at;
   return rel ? new Date(rel) >= NEW_WAVE : false;
 };
-const poolFiltered = landsArr.filter((l) => !isNewWave(l.name));
 
 function resolve(name) {
   const k = name.toLowerCase();
@@ -57,8 +63,17 @@ const jaccard = (a, b) => {
   return uni ? inter / uni : 1;
 };
 
-let newWaveTotal = 0, jacFullSum = 0, jacFiltSum = 0;
-console.log(`Filtered pool: ${poolFiltered.length}/${landsArr.length} lands (removed wave released >= ${NEW_WAVE.toISOString().slice(0, 10)})\n`);
+// methods: key -> async (requirements, landTarget) => {counts}
+const METHODS = [
+  ["greedy", async (req, t) => recommend(req, landsArr, { landTarget: t })],
+  ...Object.keys(OBJECTIVES).map((obj) => [
+    "ilp:" + obj,
+    async (req, t) => optimizeManabase({ requirements: req, lands: landsArr, landTarget: t, objective: obj }),
+  ]),
+];
+
+const agg = {}; // method -> { jac: [], newWave: 0 }
+for (const [k] of METHODS) agg[k] = { jac: [], newWave: 0 };
 
 for (const deck of DECKS) {
   const entries = deckEntries(parseDeckText(deck.list), "deck");
@@ -78,24 +93,28 @@ for (const deck of DECKS) {
     if (ld && !ld.basic) proNB.push(e.name);
   }
 
-  const recFull = recommend(requirements, landsArr, { landTarget });
-  const recFilt = recommend(requirements, poolFiltered, { landTarget });
-  const nbFull = nonbasics(recFull.counts);
-  const nbFilt = nonbasics(recFilt.counts);
-  const newPicked = nbFull.filter(isNewWave);
-  newWaveTotal += newPicked.length;
-  const jFull = jaccard(nbFull, proNB), jFilt = jaccard(nbFilt, proNB);
-  jacFullSum += jFull; jacFiltSum += jFilt;
-
-  console.log("=".repeat(70));
+  console.log("=".repeat(72));
   console.log(`${deck.archetype}   (target ~${landTarget} lands)`);
-  console.log(`  PRO nonbasics:   ${proNB.map((n) => `${n}×${qtyByName[n]}`).join(", ")}`);
-  console.log(`  APP full pool:   ${nbFull.map((n) => `${n}×${recFull.counts[n]}${isNewWave(n) ? `*[${setOf(n)}]` : ""}`).join(", ")}`);
-  console.log(`  APP no-new-wave: ${nbFilt.map((n) => `${n}×${recFilt.counts[n]}`).join(", ")}`);
-  console.log(`  new-wave picked: ${newPicked.length ? newPicked.join(", ") : "none"}`);
-  console.log(`  nonbasic Jaccard vs pro:  full ${jFull.toFixed(2)}  |  filtered ${jFilt.toFixed(2)}`);
+  console.log(`  PRO nonbasics: ${proNB.map((n) => `${n}×${qtyByName[n]}`).join(", ")}`);
+  for (const [k, run] of METHODS) {
+    let res;
+    try { res = await run(requirements, landTarget); }
+    catch (e) { console.log(`  ${k.padEnd(14)} ERROR: ${e.message}`); continue; }
+    const nb = nonbasics(res.counts);
+    const newPicked = nb.filter(isNewWave);
+    const j = jaccard(nb, proNB);
+    agg[k].jac.push(j); agg[k].newWave += newPicked.length;
+    console.log(`  ${k.padEnd(14)} J=${j.toFixed(2)}  total=${res.total ?? "?"} tapped=${res.taplands ?? "?"}` +
+      `${newPicked.length ? `  new-wave: ${newPicked.join(", ")}` : ""}`);
+    console.log(`  ${" ".repeat(14)} picks: ${nb.map((n) => `${n}×${res.counts[n]}`).join(", ") || "(basics only)"}`);
+  }
 }
 
-console.log("\n" + "#".repeat(70));
-console.log(`Total new-wave lands recommended across ${DECKS.length} decks (full pool): ${newWaveTotal}`);
-console.log(`Mean nonbasic Jaccard vs pros:  full pool ${(jacFullSum / DECKS.length).toFixed(2)}  →  new-wave removed ${(jacFiltSum / DECKS.length).toFixed(2)}`);
+console.log("\n" + "#".repeat(72));
+console.log("SUMMARY — mean nonbasic Jaccard vs pros (higher = closer to real lists)");
+console.log("#".repeat(72));
+for (const [k] of METHODS) {
+  const a = agg[k];
+  const mean = a.jac.reduce((s, x) => s + x, 0) / (a.jac.length || 1);
+  console.log(`  ${k.padEnd(14)} mean J ${mean.toFixed(3)}   new-wave lands picked (across ${DECKS.length} decks): ${a.newWave}`);
+}
