@@ -12,6 +12,22 @@ import { COLORS } from "./colors.js";
 
 const NONBASIC_MAX = 4; // singleton/playset rule
 
+const BASIC_TYPES = /\b(Plains|Island|Swamp|Mountain|Forest)\b/;
+
+// A rough land-quality score used to order interchangeable lands (same colors /
+// tapped / basic signature) so the better real cards are chosen first. The big
+// axes match expert consensus: untapped beats tapped, and a dual that carries
+// basic land types (fetchable, turns on check lands, feeds domain) beats a
+// typeless one. Premium fixing also skews rare/mythic. This only decides *which*
+// card fills a slot the color math already justified — not how many lands.
+export function landQuality(land) {
+  let q = 0;
+  if (!land.tapped) q += 100;                                   // untapped is king
+  if ((land.type || "").includes("—") && BASIC_TYPES.test(land.type)) q += 20; // typed dual
+  if (land.rarity === "rare" || land.rarity === "mythic") q += 5;
+  return q;
+}
+
 // Selectable objectives. `key` is the model variable the solver optimizes; the
 // per-land coefficient for that key is set in buildLandModel. Each objective
 // variable is distinct from the constraint variables (total/taps) so it can fold
@@ -68,7 +84,15 @@ export function candidatePool(requirements, lands) {
       g = { name: land.name, colors, tapped: !!land.tapped, basic: !!land.basic, land, members: [] };
       groups.set(sig, g);
     }
-    g.members.push(land.name);
+    g.members.push({ name: land.name, q: landQuality(land) });
+  }
+  // Within each signature, order members best-first (quality desc, then name) so
+  // summarize fills slots with the premium cards before the fringe ones; the
+  // highest-quality member becomes the group's representative variable.
+  for (const g of groups.values()) {
+    g.members.sort((a, b) => b.q - a.q || a.name.localeCompare(b.name));
+    g.members = g.members.map((m) => m.name);
+    g.name = g.members[0];
   }
   return [...groups.values()];
 }
