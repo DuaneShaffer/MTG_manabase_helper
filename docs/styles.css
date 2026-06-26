@@ -76,7 +76,17 @@ body {
 
 #deckText.dropping { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,162,39,.25); }
 
-.grid-controls { display: flex; gap: 8px; align-items: center; }
+.grid-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+.seg-btn {
+  background: var(--surface-2); color: var(--ink); border: none;
+  border-right: 1px solid var(--line); font-family: var(--font-ui);
+  font-size: 12px; font-weight: 600; padding: 7px 11px; cursor: pointer; white-space: nowrap;
+  transition: background .12s, color .12s;
+}
+.seg-btn:last-child { border-right: none; }
+.seg-btn:hover { color: var(--parchment); }
+.seg-btn.on { background: rgba(201,162,39,.18); color: var(--gold-bright); }
 .grid-controls input, .grid-controls select {
   background: var(--surface-2); color: var(--parchment);
   border: 1px solid var(--line); border-radius: var(--radius-sm);

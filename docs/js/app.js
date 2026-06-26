@@ -21,6 +21,7 @@ const state = {
   raresOnly: false,
   search: "",
   sort: "name",
+  landMode: "all",     // relevant | mycolors | utility | all
   tiles: new Map(),    // land name -> { el, land, numEl }
   spellCells: new Map(),
   lastRec: null,
@@ -128,26 +129,47 @@ function buildGrid() {
   markFixers();
 }
 
-function isVisible(land) {
+function deckColors() {
+  return new Set(COLORS.filter((c) => state.requirements[c] > 0));
+}
+
+// Which lands the "Show" mode allows. `dc` = the deck's colors (precomputed).
+function passesMode(land, dc) {
+  const mode = state.landMode;
+  if (mode === "utility") return land.colors.length === 0;
+  if ((mode === "relevant" || mode === "mycolors") && dc.size) {
+    const onColor = land.colors.some((c) => dc.has(c));
+    if (mode === "mycolors") return onColor;
+    return onColor || land.colors.length === 0;  // relevant = on-color + utility
+  }
+  return true;  // "all", or a color mode with no deck loaded yet
+}
+
+function isVisible(land, dc) {
   if (state.search && !land.name.toLowerCase().includes(state.search)) return false;
   if (state.raresOnly && land.rarity !== "rare" && land.rarity !== "mythic") return false;
-  if (state.suggest) {
-    const need = deficitColors();
-    if (!land.colors.some((c) => need.has(c))) return false;
-  }
-  return true;
+  return passesMode(land, dc);
 }
 
 function applyVisibility() {
+  const dc = deckColors();
   let n = 0;
   for (const { el: tile, land } of state.tiles.values()) {
-    const vis = isVisible(land);
+    const vis = isVisible(land, dc);
     tile.style.display = vis ? "" : "none";
     if (vis) n++;
   }
   $("#gridCount").textContent = `${n} land${n === 1 ? "" : "s"}`;
   $("#gridEmpty").hidden = n > 0;
   $("#gridEmpty").textContent = n ? "" : "No lands match the current filters.";
+}
+
+function setLandMode(mode) {
+  state.landMode = mode;
+  for (const b of document.querySelectorAll("#landMode .seg-btn")) {
+    b.classList.toggle("on", b.dataset.mode === mode);
+  }
+  applyVisibility();
 }
 
 const _colorRank = (l) => l.colors.map((c) => COLORS.indexOf(c)).sort().join("");
@@ -175,8 +197,7 @@ function changeCount(land, delta) {
   entry.numEl.textContent = next;
   applyTileState(land, entry.el);
   refreshDashboard();
-  if (state.suggest) applyVisibility();
-  markFixers();
+  markFixers();  // deficit highlight updates as the build changes
   gradeBuild();
 }
 
@@ -252,7 +273,8 @@ async function analyzeDeck() {
     refreshDashboard();
     renderSpellStrip();
     markFixers();
-    applyVisibility();
+    // Default to showing only lands relevant to this deck once we know its colors.
+    setLandMode(deckColors().size ? "relevant" : "all");
     gradeBuild();
     $("#recommendBtn").disabled = false;
     $("#suggestToggle").disabled = false;
@@ -320,7 +342,7 @@ function doGrade() {
     if (cell) {
       cell.dataset.g = g.letter;
       cell.querySelector(".bl").textContent = g.letter;
-      cell.querySelector(".bp").textContent = Math.round(prob * 100) + "%";
+      cell.querySelector(".bp").textContent = pct(prob);
     }
     worst = Math.min(worst, prob);
   }
@@ -329,7 +351,13 @@ function doGrade() {
   og.hidden = false;
   og.querySelector(".og-letter").textContent = g.letter;
   og.querySelector(".og-letter").style.background = `var(--grade-${g.letter})`;
-  og.querySelector(".og-text").textContent = `Weakest card ${Math.round(worst * 100)}% — ${g.label}`;
+  og.querySelector(".og-text").textContent = `Weakest card ${pct(worst)} — ${g.label}`;
+}
+
+// Display percentage, capped at 99% — the model conditions on hitting your land
+// drops (it measures colour reliability, not raw mana screw), so nothing is 100%.
+function pct(p) {
+  return Math.min(99, Math.round(p * 100)) + "%";
 }
 
 /* ---------- recommendation (local) ---------- */
@@ -437,12 +465,16 @@ function wireEvents() {
   $("#suggestToggle").addEventListener("click", (e) => {
     state.suggest = !state.suggest;
     e.target.classList.toggle("on", state.suggest);
-    markFixers(); applyVisibility();
+    markFixers();  // highlight-only now; the Show control owns filtering
   });
   $("#raresToggle").addEventListener("click", (e) => {
     state.raresOnly = !state.raresOnly;
     e.target.classList.toggle("on", state.raresOnly);
     applyVisibility();
+  });
+  $("#landMode").addEventListener("click", (e) => {
+    const btn = e.target.closest(".seg-btn");
+    if (btn) setLandMode(btn.dataset.mode);
   });
   $("#confSel").addEventListener("change", (e) => {
     state.threshold = e.target.value ? parseFloat(e.target.value) : null;

@@ -72,7 +72,7 @@
         <div class="strip-head">
           <div>
             <span class="strip-title">Your deck — castability on curve</span>
-            <span class="strip-sub">grades climb as you add lands; low early is expected</span>
+            <span class="strip-sub" title="Each grade is the chance the right COLORS are available by the turn you'd cast the card, assuming you keep an opening hand and hit your land drops (Frank Karsten's model). It does NOT model raw mana screw or flood — that's what the land-count target is for. So grades top out at 99%, never a guaranteed 100%.">odds of the right colors on curve — assumes you keep enough lands (ⓘ)</span>
           </div>
           <div class="overall" id="overallGrade" hidden>
             <span class="og-letter"></span>
@@ -85,6 +85,12 @@
       <div class="grid-head">
         <span id="gridCount">Loading lands…</span>
         <div class="grid-controls">
+          <div class="seg" id="landMode" role="group" aria-label="Which lands to show">
+            <button class="seg-btn" data-mode="relevant">Relevant</button>
+            <button class="seg-btn" data-mode="mycolors">My colors</button>
+            <button class="seg-btn" data-mode="utility">Utility</button>
+            <button class="seg-btn on" data-mode="all">All</button>
+          </div>
           <input type="search" id="searchBox" placeholder="Search lands…" autocomplete="off">
           <select id="sortSel" aria-label="Sort lands">
             <option value="name">Sort: name</option>
