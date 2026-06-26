@@ -291,6 +291,17 @@ def test_is_basic():
     assert not lands.is_basic({"type_line": "Land"})
 
 
+def test_is_land_accepts_typed_lands():
+    # Regression: typed lands (shocks/duals/manlands) must count as lands.
+    assert lands.is_land({"type_line": "Land — Plains Island"})   # shock land
+    assert lands.is_land({"type_line": "Land"})
+    assert lands.is_land({"type_line": "Legendary Land"})
+    assert lands.is_land({"type_line": "Basic Land — Forest"})
+    assert lands.is_land({"type_line": "Land Creature — Elemental"})
+    assert not lands.is_land({"type_line": "Creature — Elf"})
+    assert not lands.is_land({"type_line": "Enchantment — Aura"})
+
+
 # --------------------------------------------------------------------------
 # end-to-end regression against a committed fixture (offline, deterministic)
 # --------------------------------------------------------------------------

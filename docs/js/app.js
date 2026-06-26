@@ -24,10 +24,13 @@ const state = {
   tiles: new Map(),    // land name -> { el, land, numEl }
   spellCells: new Map(),
   lastRec: null,
+  lastImportedDeck: null,  // deck text whose lands were loaded into the build
 };
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
+// A land if "Land" is among its card types (left of the subtype dash).
+const isLandType = (type) => (type || "").split("—")[0].includes("Land");
 
 /* ---------- tally ---------- */
 function tally() {
@@ -229,19 +232,39 @@ async function analyzeDeck() {
       ? state.deckCards.reduce((s, c) => s + c.mv, 0) / state.deckCards.length : 3;
     state.landTarget = recommendLandCount(avg, state.deckSize);
 
+    // Load the deck's own lands into the build so the dashboard + grades reflect
+    // your actual manabase. Only when the deck text itself changes, so toggling
+    // confidence (which re-analyzes) doesn't wipe lands you've adjusted by hand.
+    let loadedLands = 0, landsOutsidePool = 0;
+    if (text !== state.lastImportedDeck) {
+      state.lastImportedDeck = text;
+      state.counts = {};
+      for (const c of cards) {
+        if (!isLandType(c.type)) continue;
+        const qty = qtyByName[c.name] || 0;
+        if (state.tiles.has(c.name)) { state.counts[c.name] = qty; loadedLands += qty; }
+        else landsOutsidePool += qty;
+      }
+      syncCountsToTiles();
+    }
+
     localStorage.setItem(STORAGE_KEY, text);
     refreshDashboard();
     renderSpellStrip();
+    markFixers();
+    applyVisibility();
     gradeBuild();
     $("#recommendBtn").disabled = false;
     $("#suggestToggle").disabled = false;
     $("#exportBtn").disabled = false;
     $("#deckStatus").textContent = `${cards.length} cards · ${state.deckSize}-card deck · target ~${state.landTarget} lands`;
     const colors = COLORS.filter((c) => state.requirements[c] > 0).map((c) => COLOR_NAMES[c]);
+    const parts = [colors.length ? `Needs ${colors.join(", ")} sources.` : "No colored requirements found."];
+    if (loadedLands) parts.push(`Loaded ${loadedLands} lands from your deck.`);
+    if (landsOutsidePool) parts.push(`${landsOutsidePool} land(s) not in the Standard pool.`);
+    if (missing.length) parts.push(`${missing.length} card(s) not found.`);
     hint.className = "hint";
-    hint.textContent = colors.length
-      ? `Needs ${colors.join(", ")} sources.` + (missing.length ? ` ${missing.length} card(s) not found.` : "")
-      : "No colored requirements found.";
+    hint.textContent = parts.join(" ");
   } catch (e) {
     hint.textContent = "Couldn't analyze: " + e.message; hint.className = "hint warn";
   }

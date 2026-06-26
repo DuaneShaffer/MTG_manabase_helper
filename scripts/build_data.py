@@ -34,9 +34,21 @@ def _oracle(card):
     return txt
 
 
+def _enters_tapped(oracle):
+    """Best-effort: does the land enter tapped *unconditionally*?
+
+    Shock lands ("you may pay 2 life... it enters tapped"), check/fast/slow lands
+    ("enters tapped unless...") are conditionally untapped, so we don't flag them
+    — only lands that always enter tapped (surveil/gain lands, etc.).
+    """
+    if "enters tapped" not in oracle and "enters the battlefield tapped" not in oracle:
+        return False
+    conditional = any(kw in oracle for kw in ("unless", "you may pay", "if you don"))
+    return not conditional
+
+
 def slim_land(card):
     uris = _uris(card)
-    oracle = _oracle(card).lower()
     return {
         "name": card["name"],
         "type": card.get("type_line", ""),
@@ -45,7 +57,7 @@ def slim_land(card):
         "image": uris.get("small"),
         "image_hi": uris.get("normal"),
         "basic": land_mod.is_basic(card),
-        "tapped": "enters tapped" in oracle or "enters the battlefield tapped" in oracle,
+        "tapped": _enters_tapped(_oracle(card).lower()),
     }
 
 

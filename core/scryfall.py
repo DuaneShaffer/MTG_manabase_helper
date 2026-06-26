@@ -35,11 +35,17 @@ STANDARD_LANDS_QUERY = "legal:standard type:land"
 # --------------------------------------------------------------------------
 # low-level HTTP + cache
 # --------------------------------------------------------------------------
-def _get(url, params=None):
-    time.sleep(_REQUEST_DELAY)
-    resp = requests.get(url, params=params, headers=_HEADERS, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
+def _get(url, params=None, _attempts=5):
+    for attempt in range(_attempts):
+        time.sleep(_REQUEST_DELAY)
+        resp = requests.get(url, params=params, headers=_HEADERS, timeout=30)
+        if resp.status_code == 429 and attempt < _attempts - 1:
+            # Rate limited — back off (honor Retry-After if given) and retry.
+            wait = float(resp.headers.get("Retry-After", 1.5)) + 0.5 * attempt
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        return resp.json()
 
 
 def _post(url, payload):

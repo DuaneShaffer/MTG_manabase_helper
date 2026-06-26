@@ -12,13 +12,18 @@ from core.util import list_of_seq_unique_by_key
 # excluded -- a colorless source does not satisfy a colored requirement.
 COLORS = ("W", "U", "B", "R", "G")
 
-_LAND_TYPE_LINES = ("Land", "Legendary Land")
-
-
 def is_land(card):
-    """True if the card is a land (including basics and legendary lands)."""
+    """True if the card is a land.
+
+    Checks for the "Land" card type in the part of the type line before the
+    subtype dash, so typed lands count too -- e.g. "Land — Plains Island"
+    (shock/dual lands), "Basic Land — Forest", "Snow Land", "Artifact Land",
+    "Land Creature — ..." (manlands). The old check only accepted a bare "Land"
+    / "Legendary Land" / "Basic Land", which silently dropped every dual-typed
+    land from the grid.
+    """
     type_line = card.get("type_line", "") or ""
-    return type_line in _LAND_TYPE_LINES or "Basic Land" in type_line
+    return "Land" in type_line.split("—")[0]
 
 
 def produced_colors(card):
