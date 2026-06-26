@@ -3,6 +3,26 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Root-level generated/cached data: Scryfall API cache + downloaded card images.
+# Anchored with a leading slash so it does NOT match docs/data/ (the committed
+# snapshot the static site ships with).
+/data/
+# Legacy committed bulk JSON (superseded by on-demand Scryfall fetch)
+mtg_cards.json
+standard_mtg_cards.json
+lands_data.json
+example_deck_data.json
+
+# Local virtualenv (present in the working dir; never tracked)
+/bin/
+/include/
+/lib/
+/lib64/
+/pyvenv.cfg
+
+# Top-level markdown (working/planning docs) — kept out of the repo
+/*.md
+
 # C extensions
 *.so
 
@@ -141,3 +161,12 @@ bin/
 
 #Not sure
 lib64
+
+# Re-include JSON that MUST be committed despite the broad *.json rule above:
+#  - the static site's committed Scryfall snapshot
+#  - docs/package.json (marks docs/js as ES modules for Node tests)
+#  - the Python test fixture
+!docs/data/*.json
+!docs/package.json
+!tests/fixtures/*.json
+/.idea/

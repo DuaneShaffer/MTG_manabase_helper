@@ -1,0 +1,89 @@
+"""Pre-fetch Scryfall data and write the slim JSON the static site ships with.
+
+The static web app loads these committed files instead of hitting Scryfall's
+API, so end users never touch Scryfall (only this build does — run weekly by a
+GitHub Action). Card *images* still load from Scryfall's CDN via the stored URLs.
+
+Run:  python scripts/build_data.py
+Writes: docs/data/lands.json, docs/data/cards.json, docs/data/meta.json
+"""
+
+import datetime
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from core import config, lands as land_mod, scryfall
+
+OUT = config.REPO_ROOT / "docs" / "data"
+
+
+def _uris(card):
+    uris = card.get("image_uris")
+    if not uris and card.get("card_faces"):
+        uris = card["card_faces"][0].get("image_uris")
+    return uris or {}
+
+
+def _oracle(card):
+    txt = card.get("oracle_text") or ""
+    if not txt and card.get("card_faces"):
+        txt = " ".join(f.get("oracle_text", "") for f in card["card_faces"])
+    return txt
+
+
+def slim_land(card):
+    uris = _uris(card)
+    oracle = _oracle(card).lower()
+    return {
+        "name": card["name"],
+        "type": card.get("type_line", ""),
+        "rarity": card.get("rarity", ""),
+        "colors": sorted(land_mod.produced_colors(card)),
+        "image": uris.get("small"),
+        "image_hi": uris.get("normal"),
+        "basic": land_mod.is_basic(card),
+        "tapped": "enters tapped" in oracle or "enters the battlefield tapped" in oracle,
+    }
+
+
+def slim_card(card):
+    cost = card.get("mana_cost") or ""
+    if not cost and card.get("card_faces"):
+        cost = card["card_faces"][0].get("mana_cost", "") or ""
+    return {
+        "name": card["name"],
+        "cost": cost,
+        "type": card.get("type_line", ""),
+        "image": _uris(card).get("small"),
+    }
+
+
+def main():
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    raw_lands = scryfall.standard_lands(force_refresh=True)
+    lands = [slim_land(c) for c in land_mod.unique_lands(raw_lands)]
+    with open(OUT / "lands.json", "w") as fh:
+        json.dump(lands, fh, separators=(",", ":"))
+
+    all_cards = scryfall._search_all("legal:standard", unique="cards")
+    cards = {c["name"].lower(): slim_card(c) for c in all_cards}
+    with open(OUT / "cards.json", "w") as fh:
+        json.dump(cards, fh, separators=(",", ":"))
+
+    meta = {
+        "generated": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ"),
+        "lands": len(lands),
+        "cards": len(cards),
+    }
+    with open(OUT / "meta.json", "w") as fh:
+        json.dump(meta, fh)
+
+    print("wrote {} lands, {} cards ({})".format(len(lands), len(cards), meta["generated"]))
+
+
+if __name__ == "__main__":
+    main()

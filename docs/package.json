@@ -1,0 +1,6 @@
+{
+  "name": "mtg-manabase-helper-web",
+  "private": true,
+  "type": "module",
+  "description": "Static client-side build of the manabase helper. type:module makes the .js files ES modules for both the browser and Node tests."
+}

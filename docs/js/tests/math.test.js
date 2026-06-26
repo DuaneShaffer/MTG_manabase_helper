@@ -1,0 +1,174 @@
+// Node test verifying the JS math modules reproduce the Python implementation's
+// exact outputs. Run with:  node docs/js/tests/math.test.js
+import assert from "node:assert";
+
+import { parseCost, manaValue, colorsInCost, costConstraints } from "../mana.js";
+import {
+  comb,
+  cardsSeen,
+  thresholdFor,
+  assumedLandCount,
+  conditionalProb,
+  castableProbability,
+  sourcesNeeded,
+  grade,
+  multivariateCastable,
+} from "../hypergeometric.js";
+import { sourcesFor, requirementsForCosts, requirementsForCards } from "../requirements.js";
+
+let passed = 0;
+function check(desc, fn) {
+  fn();
+  passed += 1;
+  console.log("ok - " + desc);
+}
+
+// --- sources_needed goldens (pips 1..4, mv pips..6) ------------------------
+// From: ./bin/python -c "...sources_needed(p,m) for p in 1..4 for m in p..6"
+const SOURCES_GOLDEN = {
+  "1,1": 16, "1,2": 13, "1,3": 12, "1,4": 10, "1,5": 9, "1,6": 9,
+  "2,2": 21, "2,3": 18, "2,4": 16, "2,5": 15, "2,6": 13,
+  "3,3": 23, "3,4": 21, "3,5": 19, "3,6": 17,
+  "4,4": 24, "4,5": 22, "4,6": 20,
+};
+check("sourcesNeeded matches all Python goldens", () => {
+  for (let p = 1; p <= 4; p++) {
+    for (let m = p; m <= 6; m++) {
+      const key = `${p},${m}`;
+      const got = sourcesNeeded(p, m);
+      assert.strictEqual(got, SOURCES_GOLDEN[key], `sourcesNeeded(${p},${m}) = ${got}, want ${SOURCES_GOLDEN[key]}`);
+    }
+  }
+});
+
+// --- requirements_for_costs goldens ----------------------------------------
+check("requirements gold {1}{W}{U} -> W:13 U:13", () => {
+  const req = requirementsForCosts(["{1}{W}{U}"]);
+  assert.deepStrictEqual(req, { W: 13, U: 13, B: 0, R: 0, G: 0 });
+});
+
+check("requirements max white {W} vs {W}{W}{W} -> W:23", () => {
+  const req = requirementsForCosts(["{W}", "{W}{W}{W}"]);
+  assert.deepStrictEqual(req, { W: 23, U: 0, B: 0, R: 0, G: 0 });
+});
+
+// requirementsForCards accepts mana_cost-keyed dicts too
+check("requirementsForCards accepts mana_cost key", () => {
+  const req = requirementsForCards([{ mana_cost: "{1}{W}{U}" }]);
+  assert.deepStrictEqual(req, { W: 13, U: 13, B: 0, R: 0, G: 0 });
+});
+
+// --- parse: multi-digit generic & colorless -------------------------------
+check("multi-digit generic {10}{W} parses to 10 generic + 1 W", () => {
+  const { generic, colored } = parseCost("{10}{W}");
+  assert.strictEqual(generic, 10);
+  assert.strictEqual(colored.W, 1);
+  assert.strictEqual(manaValue("{10}{W}"), 11);
+});
+
+check("colorless {C}{W} folds C into generic (mv 2, 1 white pip)", () => {
+  const { generic, colored } = parseCost("{C}{W}");
+  assert.strictEqual(generic, 1); // C -> generic
+  assert.strictEqual(colored.W, 1);
+  assert.strictEqual(manaValue("{C}{W}"), 2);
+  // not gold: only one true color
+  const cc = costConstraints("{C}{W}");
+  assert.strictEqual(cc.W.gold, false);
+  assert.strictEqual(cc.W.pips, 1);
+});
+
+check("colorsInCost returns distinct WUBRG set", () => {
+  const set = colorsInCost("{1}{W}{U}{U}");
+  assert.deepStrictEqual([...set].sort(), ["U", "W"]);
+});
+
+check("X/Y/Z and hybrid handling", () => {
+  // X contributes 0; hybrid {W/U} -> generic
+  assert.strictEqual(manaValue("{X}{W}"), 1);
+  const { generic } = parseCost("{W/U}{B}");
+  assert.strictEqual(generic, 1); // hybrid -> generic
+  const cc = costConstraints("{1}{W}{U}");
+  assert.strictEqual(cc.W.gold, true); // two distinct colors -> gold
+  assert.strictEqual(cc.U.gold, true);
+});
+
+// --- castable_probability within 1e-6 of Python floats ---------------------
+// From: castable_probability(2,3,18) and (2,3,10)
+check("castableProbability(2,3,18) ~= 0.9237677187542386", () => {
+  const got = castableProbability(2, 3, 18);
+  assert.ok(Math.abs(got - 0.9237677187542386) < 1e-6, `got ${got}`);
+});
+check("castableProbability(2,3,10) ~= 0.5456708588921102", () => {
+  const got = castableProbability(2, 3, 10);
+  assert.ok(Math.abs(got - 0.5456708588921102) < 1e-6, `got ${got}`);
+});
+check("castableProbability pips<=0 -> 1.0", () => {
+  assert.strictEqual(castableProbability(0, 3, 18), 1.0);
+});
+
+// --- helper functions ------------------------------------------------------
+check("cardsSeen on play / on draw", () => {
+  assert.strictEqual(cardsSeen(3, true), 9);
+  assert.strictEqual(cardsSeen(3, false), 10);
+});
+check("thresholdFor sliding + clamp", () => {
+  assert.ok(Math.abs(thresholdFor(3) - 0.92) < 1e-12);
+  assert.strictEqual(thresholdFor(20), 0.99); // clamped
+});
+check("assumedLandCount scaling", () => {
+  assert.strictEqual(assumedLandCount(60), 25);
+  assert.strictEqual(assumedLandCount(40), 17); // round(16.66..) = 17
+  assert.strictEqual(assumedLandCount(99), 41); // round(41.25) = 41
+});
+check("comb exact BigInt", () => {
+  assert.strictEqual(comb(5, 2), 10n);
+  assert.strictEqual(comb(60, 30), 118264581564861424n);
+  assert.strictEqual(comb(3, 5), 0n);
+});
+check("conditionalProb is used by castableProbability consistently", () => {
+  const direct = conditionalProb(2, 3, 60, 25, 18, cardsSeen(3, true));
+  assert.ok(Math.abs(direct - castableProbability(2, 3, 18)) < 1e-12);
+});
+
+// --- grade bands -----------------------------------------------------------
+check("grade letters per band", () => {
+  assert.strictEqual(grade(0.97).letter, "A");
+  assert.strictEqual(grade(0.95).letter, "A");
+  assert.strictEqual(grade(0.92).letter, "B");
+  assert.strictEqual(grade(0.9).letter, "B");
+  assert.strictEqual(grade(0.85).letter, "C");
+  assert.strictEqual(grade(0.8).letter, "C");
+  assert.strictEqual(grade(0.7).letter, "D");
+  assert.strictEqual(grade(0.65).letter, "D");
+  assert.strictEqual(grade(0.5).letter, "F");
+  assert.strictEqual(grade(0.97).label, "Excellent");
+  assert.strictEqual(grade(0.5).label, "Unreliable");
+});
+
+// --- sourcesFor adds +1 for gold ------------------------------------------
+check("sourcesFor adds +1 for gold cards", () => {
+  // {1}{W}{U}: each color pips=1, mv=3, gold=true.
+  // sourcesNeeded(1,3)=12, +1 gold = 13 (matches requirements gold golden).
+  assert.strictEqual(sourcesFor(1, 3, false), 12);
+  assert.strictEqual(sourcesFor(1, 3, true), 13);
+});
+
+// --- multivariateCastable sanity check ------------------------------------
+check("multivariateCastable bounded by single-color probabilities", () => {
+  const pips = { W: 1, U: 1 };
+  const sources = { W: 15, U: 15 };
+  const p = multivariateCastable(pips, 3, sources, 60, 24, true);
+  const pW = castableProbability(1, 3, 15, 60, 24, true);
+  const pU = castableProbability(1, 3, 15, 60, 24, true);
+  assert.ok(p > 0, `expected p>0, got ${p}`);
+  assert.ok(p <= Math.min(pW, pU) + 1e-12, `expected p<=min(pW,pU); p=${p}, pW=${pW}, pU=${pU}`);
+});
+check("multivariateCastable falls back for 0/1 colors", () => {
+  // 1 color -> equals castableProbability
+  const one = multivariateCastable({ W: 2 }, 3, { W: 18 }, 60, null, true);
+  assert.ok(Math.abs(one - castableProbability(2, 3, 18)) < 1e-12);
+  // 0 colors -> 1.0
+  assert.strictEqual(multivariateCastable({}, 3, {}, 60, null, true), 1.0);
+});
+
+console.log(`\nAll ${passed} checks passed.`);

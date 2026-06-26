@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manabase — Standard source calculator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wordmark">
+      <span class="pielet" aria-hidden="true">
+        <i data-c="W"></i><i data-c="U"></i><i data-c="B"></i><i data-c="R"></i><i data-c="G"></i>
+      </span>
+      <div class="wordmark-text">
+        <h1>Manabase</h1>
+        <p>Standard source calculator</p>
+      </div>
+    </div>
+    <div class="topbar-meta">
+      <span class="topbar-status" id="deckStatus">No deck loaded</span>
+      <span class="data-meta" id="dataMeta"></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel" id="panel">
+      <section class="deck-input">
+        <label for="deckText">Decklist</label>
+        <textarea id="deckText" spellcheck="false"
+          placeholder="Paste an Arena / MTGO decklist — or drop a .txt file here&#10;e.g.  4 Adarkar Wastes (DMU) 243"></textarea>
+        <div class="deck-actions">
+          <button class="btn btn-gold" id="analyzeBtn">Analyze deck</button>
+          <button class="btn btn-ghost" id="exampleBtn">Load example</button>
+        </div>
+        <div class="confidence">
+          <label for="confSel">Target confidence</label>
+          <select id="confSel">
+            <option value="">Karsten — on curve (89 + MV)%</option>
+            <option value="0.90">Flat 90%</option>
+            <option value="0.95">Flat 95%</option>
+            <option value="0.99">Flat 99%</option>
+          </select>
+        </div>
+        <p class="hint" id="deckHint"></p>
+      </section>
+
+      <section class="dashboard">
+        <h2>Mana sources</h2>
+        <div class="colors" id="colors"></div>
+        <div class="total-row">
+          <span>Lands in build</span>
+          <span class="total-num" id="totalLands">0</span>
+        </div>
+      </section>
+
+      <section class="tools">
+        <button class="btn btn-outline" id="recommendBtn" disabled>Recommend a manabase</button>
+        <div class="toggles">
+          <button class="chip" id="suggestToggle" disabled>Highlight fixers</button>
+          <button class="chip" id="raresToggle">Rares only</button>
+        </div>
+        <button class="btn btn-ghost" id="exportBtn">Export decklist</button>
+      </section>
+    </aside>
+
+    <section class="grid-wrap">
+      <section class="deck-strip" id="deckStrip" hidden>
+        <div class="strip-head">
+          <div>
+            <span class="strip-title">Your deck — castability on curve</span>
+            <span class="strip-sub">grades climb as you add lands; low early is expected</span>
+          </div>
+          <div class="overall" id="overallGrade" hidden>
+            <span class="og-letter"></span>
+            <span class="og-text"></span>
+          </div>
+        </div>
+        <div class="spell-grid" id="spellGrid"></div>
+      </section>
+
+      <div class="grid-head">
+        <span id="gridCount">Loading lands…</span>
+        <div class="grid-controls">
+          <input type="search" id="searchBox" placeholder="Search lands…" autocomplete="off">
+          <select id="sortSel" aria-label="Sort lands">
+            <option value="name">Sort: name</option>
+            <option value="color">Sort: color</option>
+            <option value="fixing">Sort: fixing</option>
+          </select>
+        </div>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div class="empty" id="gridEmpty" hidden></div>
+    </section>
+  </main>
+
+  <!-- Recommendation drawer -->
+  <div class="drawer" id="recDrawer" hidden>
+    <div class="drawer-card">
+      <div class="drawer-head">
+        <h2>Recommended manabase</h2>
+        <button class="icon-btn" id="recClose" aria-label="Close">×</button>
+      </div>
+      <p class="drawer-sub" id="recSummary"></p>
+      <div class="rec-list" id="recList"></div>
+      <div class="drawer-foot">
+        <button class="btn btn-gold" id="recApply">Apply to build</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export modal -->
+  <div class="drawer" id="exportModal" hidden>
+    <div class="drawer-card">
+      <div class="drawer-head">
+        <h2>Export decklist</h2>
+        <button class="icon-btn" id="exportClose" aria-label="Close">×</button>
+      </div>
+      <p class="drawer-sub" id="exportCopied"></p>
+      <textarea id="exportText" class="export-text" spellcheck="false" readonly></textarea>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
