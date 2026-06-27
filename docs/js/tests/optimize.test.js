@@ -43,7 +43,8 @@ ok("pool keeps both tapped and untapped UB duals", pool.filter((c) => c.colors.j
 const model = buildLandModel({ requirements: REQ, lands: LANDS, landTarget: 24, objective: "untapped" });
 ok("model has per-color minimum constraints", model.constraints.col_U.min === 10 && model.constraints.col_B.min === 10);
 ok("model pins total for the untapped objective", model.constraints.total.equal === 24);
-ok("model marks land variables integer", Object.keys(model.ints).length === pool.length);
+ok("model marks every land variable integer", pool.every((c) => model.ints[c.name] === 1));
+ok("model adds a soft shortfall variable per needed color", model.ints.short_U === 1 && model.ints.short_B === 1);
 
 // --- end to end: maximize untapped ----------------------------------------
 async function run() {
@@ -64,9 +65,12 @@ async function run() {
   const fast = await optimizeManabase({ requirements: REQ, lands: LANDS, landTarget: 24, objective: "taplands" });
   ok("taplands: feasible and uses no tapped lands", fast.feasible && fast.taplands === 0);
 
-  // Infeasible: requiring 30 of each color in a 24-land base can't be met.
+  // Over-demanding: requiring 30 of each color in a 24-land base can't be met, so
+  // the solver now returns a best-effort build at the cap with the gap as shortfall
+  // (rather than reporting infeasible).
   const hard = await optimizeManabase({ requirements: { W: 0, U: 30, B: 30, R: 0, G: 0 }, lands: LANDS, landTarget: 24, objective: "untapped" });
-  ok("infeasible target reported as not feasible", !hard.feasible);
+  ok("over-demanding target: best-effort build at the cap", hard.feasible && hard.total === 24);
+  ok("over-demanding target: reports the gap as shortfall", (hard.shortfall.U > 0 || hard.shortfall.B > 0));
 
   ok("OBJECTIVES expose three labeled goals", Object.keys(OBJECTIVES).length === 3);
 
@@ -79,9 +83,9 @@ async function run() {
   const islandSupporter = { name: "Island", colors: ["U"], type: "Basic Land — Island", tapped: false, basic: true };
 
   // Need B (gated) with no land of a matching basic type in the pool → the verge
-  // can't be leaned on for B.
+  // can't be leaned on for B, so that color shows up as shortfall.
   const noTypes = await optimizeManabase({ requirements: { W: 0, U: 0, B: 2, R: 0, G: 0 }, lands: [verge], landTarget: 2, objective: "untapped" });
-  ok("verge alone can't supply its gated color (no enabling basic type)", !noTypes.feasible);
+  ok("verge alone can't supply its gated color (no enabling basic type)", (noTypes.sources.B || 0) === 0 && noTypes.shortfall.B === 2);
 
   // Need U+B; Islands satisfy U and also turn on the verge's gated B.
   const withTypes = await optimizeManabase({ requirements: { W: 0, U: 1, B: 2, R: 0, G: 0 }, lands: [verge, islandSupporter], landTarget: 6, objective: "untapped" });

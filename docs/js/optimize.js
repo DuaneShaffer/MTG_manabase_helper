@@ -121,10 +121,25 @@ export function candidatePool(requirements, lands) {
   return [...groups.values()];
 }
 
+// Cost contribution of a single land under each objective. The solver MINIMIZES
+// total cost, so "rewards" are negative. Off-color production (colors the deck
+// doesn't need) is always mildly penalized, so a focused dual beats a rainbow land
+// when both cover the needed colors.
+function landCost(objective, cand, neededCount, off) {
+  const offPart = OFF_PENALTY * off;
+  if (objective === "taplands") return (cand.tapped ? 1 : 0) + offPart; // fewest tapped
+  if (objective === "lands") return 1 + offPart;                        // fewest total lands
+  return -(cand.tapped ? 0 : neededCount) + offPart;                    // default: most untapped sources
+}
+
 // Build a jsLPSolver model. Pure + exported for testing.
-//   { requirements, lands, landTarget, objective, taplandCap }
-export function buildLandModel({ requirements, lands, landTarget, objective = "untapped", taplandCap = 9 }) {
-  const obj = OBJECTIVES[objective] || OBJECTIVES.untapped;
+//   { requirements, lands, landTarget, objective, taplandCap, demandWeights, shortfallWeight }
+// Color requirements are SOFT: each needed color gets a shortfall variable that can
+// fill its minimum at a steep, demand-weighted cost. So instead of running extra
+// lands (or going infeasible) to force-cover a demanding color, the solver keeps to
+// the land target and, when something must give, gives on the color the deck leans
+// on least — `demandWeights` (per-color total colored pips) ranks that.
+export function buildLandModel({ requirements, lands, landTarget, objective = "untapped", taplandCap = 9, demandWeights = {}, shortfallWeight = 1000 }) {
   const needed = new Set(COLORS.filter((c) => (requirements[c] || 0) > 0));
   const pool = candidatePool(requirements, lands);
 
@@ -132,32 +147,29 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
   const ints = {};
   const constraints = {};
 
-  // Per-color source minimums.
+  // Per-color source minimums (made soft by the shortfall variables below).
   for (const c of COLORS) {
     if ((requirements[c] || 0) > 0) constraints["col_" + c] = { min: requirements[c] };
   }
-  // Total lands: pinned to the target for the untapped / taplands objectives;
-  // left free (and minimized) when the objective *is* "fewest total lands".
+  // Total lands: the recommended count is a hard cap. The untapped / taplands
+  // objectives fill to exactly the target; "fewest total lands" may come in under
+  // it (but never over) when fewer lands still cover every color.
   const pinTotal = objective !== "lands";
-  if (pinTotal && landTarget) constraints.total = { equal: landTarget };
+  if (landTarget) constraints.total = pinTotal ? { equal: landTarget } : { max: landTarget };
   // Tapland cap — except when we're already minimizing taplands.
   if (objective !== "taplands") constraints.taps = { max: taplandCap };
 
   pool.forEach((cand, i) => {
-    // Objective: reward a Verge as the full dual it becomes once its basic type is
-    // online, so the solver prefers it like pros do. The HARD color minimum still
-    // routes the gated color through the support linkage below (col_ credit uses
-    // only the reliable colors), so it can't be leaned on without the types.
+    // Reward a Verge as the full dual it becomes once its basic type is online, so
+    // the solver prefers it like pros do. The color minimum still routes the gated
+    // color through the support linkage below (col_ credit uses only the reliable
+    // colors), so it can't be leaned on without the types.
     const neededCount = cand.colors.reduce((n, c) => n + (needed.has(c) ? 1 : 0), 0);
     const off = cand.colors.filter((c) => !needed.has(c)).length; // colors the deck doesn't need
     const v = {
       total: 1,                          // constraint: total land count
       taps: cand.tapped ? 1 : 0,         // constraint: tapland cap
-      // objective accumulators (only the active one is optimized); each scores
-      // needed colors only and is penalized for wasted off-colors.
-      obj_untapped: (cand.tapped ? 0 : neededCount) - OFF_PENALTY * off,
-      obj_taps: (cand.tapped ? 1 : 0) + OFF_PENALTY * off,
-      obj_total: 1 + OFF_PENALTY * off,
+      cost: landCost(objective, cand, neededCount, off),
     };
     for (const c of cand.reliable) if (constraints["col_" + c]) v["col_" + c] = 1;
     const capKey = "cap_" + i; // per-variable copy bound
@@ -170,6 +182,17 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
     variables[cand.name] = v;
     ints[cand.name] = 1;
   });
+
+  // Soft requirement slack: one shortfall variable per needed color satisfies that
+  // color's minimum at cost shortfallWeight × demand. shortfallWeight dwarfs any
+  // land-shape term, so the solver only shorts a color when the land cap (and
+  // tapland cap) physically prevent covering it — and the demand weight steers that
+  // unavoidable shortfall onto the lowest-demand color first.
+  for (const c of COLORS) {
+    if (!constraints["col_" + c]) continue;
+    variables["short_" + c] = { ["col_" + c]: 1, cost: shortfallWeight * Math.max(1, demandWeights[c] || 1) };
+    ints["short_" + c] = 1;
+  }
 
   // Verge gating: a gated color only counts up to how many lands supply the
   // enabling basic type. Model it as an aux variable per (verge, gated color):
@@ -194,7 +217,7 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
     }
   });
 
-  return { optimize: obj.key, opType: obj.opType, constraints, variables, ints, _pool: pool };
+  return { optimize: "cost", opType: "min", constraints, variables, ints, _pool: pool };
 }
 
 // Turn a solver solution into the same shape recommend() returns, so the UI can
@@ -204,12 +227,17 @@ export function summarize(model, solution, requirements) {
   const sources = {};
   for (const c of COLORS) sources[c] = 0;
   let total = 0, taplands = 0;
-  for (const cand of model._pool) {
+  model._pool.forEach((cand, idx) => {
     let n = Math.round(solution[cand.name] || 0);
-    if (n <= 0) continue;
+    if (n <= 0) return;
     total += n;
     if (cand.tapped) taplands += n;
-    for (const c of cand.colors) sources[c] += n;
+    // Reliable colors are always produced. A Verge's gated color counts only up to
+    // the credit the solver could enable (lands of a matching basic type in the
+    // build) — so an unsupported gated color correctly reads as a shortfall, not a
+    // phantom source.
+    for (const c of cand.reliable) sources[c] += n;
+    for (const c of cand.gated) sources[c] += Math.round(solution[`vcredit_${idx}_${c}`] || 0);
     // Expand the signature's count back onto concrete cards: basics take any
     // number; each distinct non-basic card takes at most 4.
     if (cand.basic) {
@@ -222,7 +250,7 @@ export function summarize(model, solution, requirements) {
         n -= take;
       }
     }
-  }
+  });
   const shortfall = {};
   for (const c of COLORS) {
     const d = (requirements[c] || 0) - sources[c];
