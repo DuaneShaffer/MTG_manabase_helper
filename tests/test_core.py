@@ -317,13 +317,17 @@ def test_is_land_accepts_typed_lands():
     assert lands.is_land({"type_line": "Land Creature — Elemental"})
     assert not lands.is_land({"type_line": "Creature — Elf"})
     assert not lands.is_land({"type_line": "Enchantment — Aura"})
-    # A transform DFC's land is on the BACK — you cast the front as a spell, so it
-    # is not a manabase land. Only the front face counts.
-    assert not lands.is_land({"type_line": "Artifact // Land — Cave"})
-    assert not lands.is_land({"type_line": "Enchantment // Land"})
-    assert not lands.is_land({"type_line": "Legendary Creature — God // Land"})
-    # ...but a land with a spell on its back (adventure "Town" lands) IS a land.
-    assert lands.is_land({"type_line": "Land — Town // Sorcery — Adventure"})
+    # A transform DFC's land is on the BACK — you cast the front and only reach the
+    # land by transforming, so it is not a manabase land (e.g. Ixalan god // Temple).
+    assert not lands.is_land({"type_line": "Artifact // Land — Cave", "layout": "transform"})
+    assert not lands.is_land({"type_line": "Enchantment // Land", "layout": "transform"})
+    assert not lands.is_land({"type_line": "Legendary Creature — God // Land", "layout": "transform"})
+    # A modal DFC lets you play either face, so a land on EITHER face counts
+    # (Zendikar Rising "Spell // Land" MDFCs and pathways).
+    assert lands.is_land({"type_line": "Sorcery — Arcane // Land — Mountain", "layout": "modal_dfc"})
+    assert lands.is_land({"type_line": "Land // Land", "layout": "modal_dfc"})
+    # A land with a spell on its back (adventure "Town" lands) IS a land.
+    assert lands.is_land({"type_line": "Land — Town // Sorcery — Adventure", "layout": "adventure"})
 
 
 # --------------------------------------------------------------------------

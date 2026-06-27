@@ -22,13 +22,19 @@ def is_land(card):
     / "Legendary Land" / "Basic Land", which silently dropped every dual-typed
     land from the grid.
 
-    Only the *front* face counts: a transform DFC whose back is a land (e.g.
-    "Artifact // Land — Cave", "Enchantment // Land") is a spell you cast, not a
-    land you play, so it must not be treated as a manabase land.
+    Double-faced cards depend on layout:
+      * ``modal_dfc`` — you choose which face to play from hand, so a land on
+        *either* face is a real land you can run (Zendikar Rising MDFCs like
+        "Sorcery // Land", and the Ixalan "god // Temple" cards).
+      * everything else (``transform`` etc.) — you cast the front and the back is
+        only reached by transforming, so a back-face land doesn't count
+        ("Artifact // Land — Cave", "Enchantment // Land" are spells you cast).
     """
     type_line = card.get("type_line", "") or ""
-    front = type_line.split("//")[0]
-    return "Land" in front.split("—")[0]
+    faces = type_line.split("//")
+    if card.get("layout") == "modal_dfc":
+        return any("Land" in f.split("—")[0] for f in faces)
+    return "Land" in faces[0].split("—")[0]
 
 
 def produced_colors(card):
