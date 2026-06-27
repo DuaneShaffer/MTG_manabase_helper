@@ -23,7 +23,8 @@ const state = {
   raresOnly: false,
   search: "",
   sort: "name",
-  landMode: "all",     // relevant | mycolors | utility | all
+  landMode: "all",     // suggested | relevant | mycolors | utility | all
+  suggestedLands: null,    // Set of land names the recommender would reach for (null until computed)
   tiles: new Map(),    // land name -> { el, land, numEl }
   spellCells: new Map(),
   lastRec: null,
@@ -221,6 +222,14 @@ function deckColors() {
 function passesMode(land, dc) {
   const mode = state.landMode;
   if (mode === "utility") return land.colors.length === 0;
+  if (mode === "suggested") {
+    // The recommender's picks for this deck. Always keep lands you've already
+    // added so toggling here never hides part of your own build. Until the
+    // optimizer returns (or if it can't load), fall back to "relevant".
+    if (state.suggestedLands) return state.suggestedLands.has(land.name) || (state.counts[land.name] || 0) > 0;
+    if (dc.size) return land.colors.some((c) => dc.has(c)) || land.colors.length === 0;
+    return true;
+  }
   if ((mode === "relevant" || mode === "mycolors") && dc.size) {
     const onColor = land.colors.some((c) => dc.has(c));
     if (mode === "mycolors") return onColor;
@@ -281,6 +290,7 @@ function changeCount(land, delta) {
   entry.numEl.textContent = next;
   applyTileState(land, entry.el);
   refreshDashboard();
+  refreshBuildList();
   markFixers();  // deficit highlight updates as the build changes
   gradeBuild();
 }
@@ -301,6 +311,55 @@ function syncCountsToTiles() {
     numEl.textContent = state.counts[land.name] || 0;
     applyTileState(land, tile);
   }
+  refreshBuildList();
+}
+
+/* ---------- "Your build" list (current manabase, editable in place) ---------- */
+function refreshBuildList() {
+  const wrap = $("#buildWrap");
+  const list = $("#buildList");
+  if (!wrap || !list) return;
+  const byName = new Map(state.lands.map((l) => [l.name, l]));
+  const rows = Object.entries(state.counts)
+    .filter(([, n]) => n > 0)
+    .map(([name, n]) => ({ land: byName.get(name), n }))
+    .filter((r) => r.land)
+    .sort((a, b) => _colorRank(a.land).localeCompare(_colorRank(b.land)) || a.land.name.localeCompare(b.land.name));
+
+  // Show the section once there's a deck to tune (even at 0 lands, as an invitation)
+  // or any land already added by hand.
+  const total = rows.reduce((s, r) => s + r.n, 0);
+  wrap.hidden = !(state.spells.length || total > 0);
+
+  list.innerHTML = "";
+  if (!rows.length) {
+    const empty = el("div", "build-empty");
+    empty.textContent = "No lands yet. Add them from the grid, or press Build manabase.";
+    list.appendChild(empty);
+    $("#buildDilution").textContent = "";
+    return;
+  }
+  for (const { land, n } of rows) {
+    const row = el("div", "build-row");
+    const c = el("span", "b-c"); c.textContent = n;
+    const name = el("span", "b-n"); name.textContent = land.name; name.title = land.name;
+    const dots = el("span", "b-d");
+    for (const col of land.colors) { const i = el("i"); i.dataset.c = col; dots.appendChild(i); }
+    const step = el("div", "b-step");
+    const minus = el("button", "step-btn b-mini"); minus.textContent = "−";
+    minus.setAttribute("aria-label", `Remove one ${land.name}`);
+    const plus = el("button", "step-btn b-mini"); plus.textContent = "+";
+    plus.setAttribute("aria-label", `Add one ${land.name}`);
+    minus.addEventListener("click", () => changeCount(land, -1));
+    plus.addEventListener("click", () => changeCount(land, 1));
+    step.append(minus, plus);
+    row.append(c, name, dots, step);
+    list.appendChild(row);
+  }
+  // Dilution: flag lands that make no colored mana (utility/colorless) so a base
+  // padded with them is visible at a glance.
+  const colored = rows.filter((r) => r.land.colors.length).reduce((s, r) => s + r.n, 0);
+  $("#buildDilution").textContent = colored < total ? `${colored} colored · ${total} lands` : `${total} lands`;
 }
 
 /* ---------- conditional fixing (Avengers Tower etc.) ---------- */
@@ -509,7 +568,11 @@ async function analyzeDeck() {
     refreshDashboard();
     renderSpellStrip();
     markFixers();
-    setLandMode(deckColors().size ? "relevant" : "all");
+    // Default to the recommender-driven "Suggested" view. It falls back to the
+    // broader "relevant" set until computeSuggested() resolves, then narrows.
+    state.suggestedLands = null;  // stale from any previous deck
+    setLandMode(deckColors().size ? "suggested" : "all");
+    if (deckColors().size) computeSuggested();
     updateLandPanel();
     gradeBuild();
     $("#recommendBtn").disabled = false;
@@ -709,6 +772,50 @@ const REC_OBJECTIVES = ["untapped", "taplands", "lands"];
 // to one option, keeping the higher-priority label.
 const _sig = (rec) => rec.total + "|" + rec.taplands;
 
+// Solve every objective and return the distinct optimal bases (deduped by their
+// land-count / tapland tradeoff). Shared by the Recommend drawer and the
+// "Suggested" land filter, so both tell the same story.
+async function computeRecOptions() {
+  const results = await Promise.all(
+    REC_OBJECTIVES.map((objective) =>
+      optimizeManabase({
+        requirements: state.requirements, lands: state.lands,
+        landTarget: state.landTarget, objective,
+      }).then((rec) => ({ objective, rec }), () => null)),
+  );
+  const options = [];
+  const seen = new Set();
+  for (const r of results) {
+    if (!r || !r.rec.feasible) continue;
+    const sig = _sig(r.rec);
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    options.push({ label: OBJECTIVES[r.objective].label, rec: r.rec });
+  }
+  return options;
+}
+
+// Build the "Suggested" filter set: every land any optimal base reaches for, plus
+// on-color basics (always a tuning lever). These are the same picks Build manabase
+// offers — narrowing the full pool to what the recommender would actually run.
+let _suggestRun = 0;
+async function computeSuggested() {
+  const run = ++_suggestRun;
+  try {
+    const options = await computeRecOptions();
+    if (run !== _suggestRun) return;  // superseded by a newer analyze
+    const set = new Set();
+    for (const opt of options) for (const name of Object.keys(opt.rec.counts)) set.add(name);
+    const dc = deckColors();
+    for (const l of state.lands) if (l.basic && l.colors.some((c) => dc.has(c))) set.add(l.name);
+    state.suggestedLands = set.size ? set : null;  // null → passesMode falls back to "relevant"
+  } catch {
+    if (run !== _suggestRun) return;
+    state.suggestedLands = null;  // solver unavailable
+  }
+  if (state.landMode === "suggested") applyVisibility();
+}
+
 // Compute every optimal manabase up front and let the user compare and pick.
 let _recRun = 0;
 async function computeAllRecs() {
@@ -721,25 +828,8 @@ async function computeAllRecs() {
   $("#recSummary").textContent = "Working out your options…";
 
   try {
-    const results = await Promise.all(
-      REC_OBJECTIVES.map((objective) =>
-        optimizeManabase({
-          requirements: state.requirements, lands: state.lands,
-          landTarget: state.landTarget, objective,
-        }).then((rec) => ({ objective, rec }), () => null)),
-    );
+    const options = await computeRecOptions();
     if (run !== _recRun) return;  // superseded by a newer open/recompute
-
-    // Keep feasible results, deduped by the actual land set (first label wins).
-    const options = [];
-    const seen = new Set();
-    for (const r of results) {
-      if (!r || !r.rec.feasible) continue;
-      const sig = _sig(r.rec);
-      if (seen.has(sig)) continue;
-      seen.add(sig);
-      options.push({ label: OBJECTIVES[r.objective].label, rec: r.rec });
-    }
 
     if (options.length) {
       state.recOptions = options;
