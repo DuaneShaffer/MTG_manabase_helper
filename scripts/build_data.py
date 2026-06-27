@@ -98,6 +98,12 @@ def analyze_land_colors(card):
     type_gated, type_gate = set(), set()
     for line in _oracle(card).split("\n"):
         low = line.lower()
+        # A land never makes mana through an ability it GRANTS to OTHER permanents
+        # (e.g. Forgotten Monument: 'Other Caves you control have "{T}, Pay 1 life:
+        # Add one mana of any color."'). Granted abilities are written in quotes, so
+        # the colors belong to the other permanents — not this land. Skip them.
+        if 'have "' in low:
+            continue
         if "add" not in low or ":" not in line:
             continue
         cost = line.split(":", 1)[0].lower()

@@ -339,3 +339,31 @@ def test_example_deck_requirements_regression():
     reqs = requirements.requirements_for_cards(cards)
     # Golden values for the bundled example deck.
     assert reqs == {"W": 16, "U": 13, "B": 0, "R": 18, "G": 0}
+
+
+# --------------------------------------------------------------------------
+# build-data land color parsing: granted vs. own mana abilities
+# --------------------------------------------------------------------------
+def test_land_ignores_granted_mana_abilities():
+    """A land doesn't make mana through abilities it GRANTS to other permanents.
+    Forgotten Monument taps only for {C}; its 'any color' is granted (in quotes)
+    to other Caves, so Scryfall's produced_mana over-reports all five colors."""
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    import build_data
+
+    granted = {
+        "name": "Forgotten Monument", "type_line": "Land — Cave",
+        "produced_mana": ["B", "C", "G", "R", "U", "W"],
+        "oracle_text": ('{T}: Add {C}.\nOther Caves you control have '
+                        '"{T}, Pay 1 life: Add one mana of any color."'),
+    }
+    assert build_data.slim_land(granted)["colors"] == []
+
+    # A land's OWN any-color ability (same wording, not granted) is real fixing.
+    own = {
+        "name": "Starting Town", "type_line": "Land — Town",
+        "produced_mana": ["B", "C", "G", "R", "U", "W"],
+        "oracle_text": ("{T}: Add {C}.\n{T}, Pay 1 life: Add one mana of any color."),
+    }
+    assert build_data.slim_land(own)["colors"] == ["B", "G", "R", "U", "W"]
