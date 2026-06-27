@@ -92,6 +92,24 @@ async function run() {
   ok("verge supplies its gated color once a matching type is in the build",
     withTypes.feasible && (withTypes.counts["Island"] || 0) > 0 && (withTypes.counts["UB Verge"] || 0) > 0);
 
+  // --- Check-land gating (Marvel cycle) ------------------------------------
+  // A check land taps for {C} freely but its colors only with a basic in play,
+  // so its colored output is gated on controlling an ACTUAL basic land.
+  const bastion = { name: "Gleaming Bastion", colors: ["U", "W"], gatedColors: ["U", "W"],
+    needsBasic: true, type: "Land", tapped: false, basic: false };
+  const plains = { name: "Plains", colors: ["W"], type: "Basic Land — Plains", tapped: false, basic: true };
+  const island = { name: "Island", colors: ["U"], type: "Basic Land — Island", tapped: false, basic: true };
+
+  const noBasic = await optimizeManabase({ requirements: { W: 2, U: 2, B: 0, R: 0, G: 0 }, lands: [bastion], landTarget: 4, objective: "untapped" });
+  ok("check land with no basic in the build is colorless (its color reads as shortfall)",
+    (noBasic.sources.W || 0) === 0 && noBasic.shortfall.W === 2);
+
+  const withBasic = await optimizeManabase({ requirements: { W: 2, U: 2, B: 0, R: 0, G: 0 }, lands: [bastion, plains, island], landTarget: 8, objective: "untapped" });
+  ok("check land supplies its colors once the build runs basics",
+    withBasic.feasible && withBasic.sources.W >= 2 && withBasic.sources.U >= 2
+    && Object.keys(withBasic.shortfall).length === 0
+    && (withBasic.counts["Gleaming Bastion"] || 0) > 0 && (withBasic.counts["Plains"] || 0) > 0);
+
   console.log(`\n${passed} optimizer tests passed`);
 }
 run().catch((e) => { console.error(e); process.exit(1); });

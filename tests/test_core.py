@@ -367,3 +367,24 @@ def test_land_ignores_granted_mana_abilities():
         "oracle_text": ("{T}: Add {C}.\n{T}, Pay 1 life: Add one mana of any color."),
     }
     assert build_data.slim_land(own)["colors"] == ["B", "G", "R", "U", "W"]
+
+
+def test_land_basic_check_land_gates_color_on_a_basic():
+    """Marvel 'check lands' tap for {C} freely but make their colors only with a
+    basic in play, so their colored output is gated on controlling an actual
+    basic land (not merely a basic land type, which typed nonbasic duals share)."""
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    import build_data
+
+    bastion = {
+        "name": "Gleaming Bastion", "type_line": "Land",
+        "produced_mana": ["C", "U", "W"],
+        "oracle_text": ("{T}: Add {C}.\n{T}: Add {W} or {U}. Activate only if this "
+                        "land entered this turn or if you control a basic land."),
+    }
+    out = build_data.slim_land(bastion)
+    assert out["colors"] == ["U", "W"]        # optimistic dual for the closed-form grade
+    assert out["gatedColors"] == ["U", "W"]   # ...but both colors are gated
+    assert out.get("needsBasic") is True
+    assert "typeGate" not in out              # gated on a basic, not a basic land type

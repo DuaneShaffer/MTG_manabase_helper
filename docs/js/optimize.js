@@ -103,8 +103,8 @@ export function candidatePool(requirements, lands) {
     if (!g) {
       g = {
         name: land.name, colors, tapped: !!land.tapped, basic: !!land.basic, land, members: [],
-        gated, typeGate: land.typeGate || [], types: basicTypesOf(land),
-        reliable: colors.filter((c) => !gated.includes(c)), // colors available without the type gate
+        gated, typeGate: land.typeGate || [], needsBasic: !!land.needsBasic, types: basicTypesOf(land),
+        reliable: colors.filter((c) => !gated.includes(c)), // colors available without the gate
       };
       groups.set(sig, g);
     }
@@ -194,15 +194,20 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
     ints["short_" + c] = 1;
   }
 
-  // Verge gating: a gated color only counts up to how many lands supply the
-  // enabling basic type. Model it as an aux variable per (verge, gated color):
-  //   credit ≤ verge copies   AND   credit ≤ Σ(lands with a matching basic type)
-  // and route that credit (not the verge itself) into the color minimum. So the
-  // solver only leans on a Verge's second color when the build actually supplies
-  // the types — it won't just jam in four.
+  // Gated-color credit: a gated color only counts up to how many lands enable it.
+  // Two gates share this machinery:
+  //   Verge      — enabled by lands of a matching basic TYPE (typed duals included).
+  //   Check land — enabled by actual BASIC lands (the Marvel cycle: taps for {C}
+  //                otherwise). Without basics it contributes no colored sources.
+  // Model it as an aux variable per (land, gated color):
+  //   credit ≤ this land's copies   AND   credit ≤ Σ(enabling lands)
+  // and route that credit (not the land itself) into the color minimum, so the
+  // solver only leans on the gated color when the build actually supplies enablers.
   pool.forEach((cand, i) => {
-    if (!cand.gated.length || !cand.typeGate.length) return;
-    const supporters = pool.filter((p) => p.types.some((t) => cand.typeGate.includes(t)));
+    if (!cand.gated.length || (!cand.typeGate.length && !cand.needsBasic)) return;
+    const supporters = cand.needsBasic
+      ? pool.filter((p) => p.basic)
+      : pool.filter((p) => p.types.some((t) => cand.typeGate.includes(t)));
     for (const c of cand.gated) {
       if (!constraints["col_" + c]) continue; // gated color not needed
       const aux = `vcredit_${i}_${c}`;

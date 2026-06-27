@@ -86,16 +86,17 @@ def analyze_land_colors(card):
     # into a basic land of a chosen type, so they fix any one color — a flexible
     # five-color source, like Starting Town / a painland.
     if "choose a basic land type" in low and "the chosen type" in low:
-        return sorted("WUBRG"), [], None, [], []
+        return sorted("WUBRG"), [], None, [], [], False
     produced = set(card.get("produced_mana") or []) & set("WUBRG")
     type_line = card.get("type_line", "") or ""
     if not produced:
-        return [], [], None, [], []
+        return [], [], None, [], [], False
     if any(t in type_line for t in _BASIC_TYPES):
-        return sorted(produced), [], None, [], []  # typed land — genuine fixing
+        return sorted(produced), [], None, [], [], False  # typed land — genuine fixing
 
     reliable, conditional, condition = set(), set(), None
     type_gated, type_gate = set(), set()
+    needs_basic = False
     for line in _oracle(card).split("\n"):
         low = line.lower()
         # A land never makes mana through an ability it GRANTS to OTHER permanents
@@ -117,25 +118,37 @@ def analyze_land_colors(card):
             continue
         # "Spend this mana only to cast a creature spell" / "an instant or sorcery"
         m = re.search(r"spend this mana only to cast (?:a |an )?([a-z]+(?: or [a-z]+)*)", low)
-        # Verge: "Activate (this ability) only if you control a/an Island or a Swamp."
-        mt = re.search(r"activate (?:this ability )?only if you control (.+)", low)
+        # Gated colored ability, two flavors:
+        #   Verge — "Activate only if you control an Island or a Swamp" (a basic
+        #     TYPE, which typed nonbasic duals also satisfy).
+        #   Check land (Marvel cycle) — "Activate only if this land entered this turn
+        #     or if you control a basic land" (any actual BASIC land; the land taps
+        #     for {C} otherwise). Gated on a real basic, tracked via needs_basic.
+        gate = None
+        if "activate" in low and "only if" in low:
+            mc = re.search(r"you control (?:a |an )?(.+)", low)
+            if mc:
+                gate = mc.group(1)
         if m:
             conditional |= colors
             condition = condition or m.group(1).replace(" spell", "").strip()
-        elif mt:
+        elif gate is not None:
             type_gated |= colors
-            for t in _BASIC_TYPES:
-                if t.lower() in mt.group(1):
-                    type_gate.add(t)
+            if "basic land" in gate:
+                needs_basic = True
+            else:
+                for t in _BASIC_TYPES:
+                    if t.lower() in gate:
+                        type_gate.add(t)
         else:
             reliable |= colors
     return (sorted(reliable), sorted(conditional - reliable), condition,
-            sorted(type_gated - reliable), sorted(type_gate))
+            sorted(type_gated - reliable), sorted(type_gate), needs_basic)
 
 
 def slim_land(card):
     uris = _uris(card)
-    reliable, cond_colors, condition, gated_colors, type_gate = analyze_land_colors(card)
+    reliable, cond_colors, condition, gated_colors, type_gate, needs_basic = analyze_land_colors(card)
     out = {
         "name": card["name"],
         "type": card.get("type_line", ""),
@@ -156,6 +169,12 @@ def slim_land(card):
     if gated_colors and type_gate:
         out["gatedColors"] = gated_colors
         out["typeGate"] = type_gate
+    # Marvel "check land": taps for {C} freely, but its colors only with a basic in
+    # play. Treat the colors as gated on controlling an actual basic land, so the
+    # recommender counts them as colorless until the build runs basics.
+    if gated_colors and needs_basic:
+        out["gatedColors"] = gated_colors
+        out["needsBasic"] = True
     # Basic-fetch lands (Fabled Passage, Escape Tunnel): sacrifice to search up a
     # basic. They fix any color you run basics for, but the fetched land enters
     # tapped, so model them as a slow (tapped) flexible source. Exclude lands that
