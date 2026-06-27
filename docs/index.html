@@ -74,11 +74,8 @@
               <span class="pip" data-c="G">G</span>
             </div>
             <div class="grade">
-              <span class="grade-letter" id="gradeLetter">A</span>
-              <span class="grade-meta">
-                <span class="grade-pct" id="gradePct">94%</span>
-                <span class="grade-cap">on curve</span>
-              </span>
+              <span class="grade-num" id="gradeNum">94%</span>
+              <span class="grade-cap">castable on curve</span>
             </div>
           </div>
         </div>
@@ -105,7 +102,7 @@
         <div class="features-grid">
           <div class="feature reveal" data-key="W">
             <h3>Card-by-card grades</h3>
-            <p>Every colored spell gets a letter: the odds its colors are ready by the turn you cast it. The math is honest — it caps at 99%, never a fake guarantee.</p>
+            <p>Every colored spell gets two numbers: the odds its colors are ready on the turn you cast it, and a simulated rate that folds in mana screw and flood. Both cap at 99% — never a fake guarantee.</p>
           </div>
           <div class="feature reveal" data-key="U">
             <h3>The right land count</h3>
@@ -113,11 +110,11 @@
           </div>
           <div class="feature reveal" data-key="B">
             <h3>A base, recommended</h3>
-            <p>One click fills the gaps — untapped sources first, taplands capped, every color you need covered, sized to your land target.</p>
+            <p>One click solves for a concrete set — untapped sources first, taplands capped, held to your land target. When every color won't fit that count, it says which one gives and what to change.</p>
           </div>
           <div class="feature reveal" data-key="R">
             <h3>Simulate real games</h3>
-            <p>Play out thousands of shuffles, mulligans and draws — mana screw and flood included — for the true on-curve odds a formula can't see.</p>
+            <p>Play out thousands of shuffles, mulligans and draws — mana screw and flood included — for an on-curve rate the closed-form math can't capture. Still a model, with its own simplifications, but a more realistic one.</p>
           </div>
           <div class="feature reveal" data-key="G">
             <h3>Lands that think</h3>
@@ -132,19 +129,20 @@
       <div class="wrap method">
         <div class="section-head reveal">
           <p class="eyebrow">Under the hood</p>
-          <h2>The model, not a guess.</h2>
-          <p class="body">Requirements come straight from Frank Karsten's conditional hypergeometric model — the one competitive players cite — with the sliding <strong>(89 + mana value)%</strong> confidence target.</p>
-          <p class="body">Then a Monte-Carlo simulator pressure-tests the build against thousands of real games, because a closed-form number reads rosy when half your lands enter tapped.</p>
+          <h2>Built on Karsten — clear about where we differ.</h2>
+          <p class="body">Color requirements use Frank Karsten's conditional-hypergeometric source counts and his sliding <strong>(89 + mana value)%</strong> on-curve target — the framework competitive players cite.</p>
+          <p class="body">We adapt it rather than reprint it, so our numbers can differ from his published tables: a Monte-Carlo simulator adds real mana screw and flood, multicolor cards get a joint-probability grade instead of his +1-source shortcut, the land-count formula caps its draw/ramp discount, and an ILP solver picks the actual lands.</p>
         </div>
         <div class="formula reveal">
           <p class="formula-label">Castability, on the play</p>
           <p class="formula-eq">P(colors ready <span class="frac">and</span> lands ready)<br>───────────────────────<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;P(lands ready)</p>
+          <p class="bands-cap">Each card shows this % and tints by it:</p>
           <div class="bands">
-            <span class="band" data-g="A"><b>A</b>95+</span>
-            <span class="band" data-g="B"><b>B</b>90</span>
-            <span class="band" data-g="C"><b>C</b>80</span>
-            <span class="band" data-g="D"><b>D</b>65</span>
-            <span class="band" data-g="F"><b>F</b>&lt;65</span>
+            <span class="band" data-g="A"><i></i>95%+ <em>excellent</em></span>
+            <span class="band" data-g="B"><i></i>90%+ <em>good</em></span>
+            <span class="band" data-g="C"><i></i>80%+ <em>risky</em></span>
+            <span class="band" data-g="D"><i></i>65%+ <em>poor</em></span>
+            <span class="band" data-g="F"><i></i>&lt;65% <em>unreliable</em></span>
           </div>
         </div>
       </div>
@@ -174,16 +172,16 @@
     // then the grade resolves — the app's signature moment, as the hero.
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const pips = [...document.querySelectorAll("#pips .pip")];
-    const letter = document.getElementById("gradeLetter");
+    const num = document.getElementById("gradeNum");
     if (reduce) {
       pips.forEach((p) => p.classList.add("lit"));
-      letter.classList.add("show");
+      num.classList.add("show");
     } else {
       // Run on script execution (DOM is ready — this is at end of body), not on
       // window.load, so the beat never stalls waiting on font/image loads.
       requestAnimationFrame(() => {
         pips.forEach((p, i) => setTimeout(() => p.classList.add("lit"), 300 + i * 170));
-        setTimeout(() => letter.classList.add("show"), 300 + pips.length * 170 + 120);
+        setTimeout(() => num.classList.add("show"), 300 + pips.length * 170 + 120);
       });
     }
 

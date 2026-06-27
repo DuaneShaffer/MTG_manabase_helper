@@ -928,7 +928,7 @@ function selectRecOption(i) {
   for (const b of document.querySelectorAll("#recOptions .rec-option")) {
     b.classList.toggle("on", Number(b.dataset.i) === i);
   }
-  const note = state.recOptions.length > 1 ? "provably optimal — " + opt.label.toLowerCase() : opt.label.toLowerCase();
+  const note = state.recOptions.length > 1 ? "optimal for this goal — " + opt.label.toLowerCase() : opt.label.toLowerCase();
   renderRecList(opt.rec, `${opt.rec.total} lands · ${opt.rec.taplands} tapped · ${note}${_shortNote(opt.rec)}`);
   $("#recApply").disabled = false;
 }
