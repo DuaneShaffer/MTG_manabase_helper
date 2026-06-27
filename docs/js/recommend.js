@@ -9,12 +9,16 @@ const NONBASIC_MAX = 4; // singleton/playset rule for non-basic lands
 
 // Recommend a land count from the deck's average mana value, using Karsten's
 // draw/ramp-aware regression:
-//   base = 19.59 + 1.90 * avgMV - 0.28 * smoothCount
-// where smoothCount is the number of cheap card-draw / ramp / dig spells (each
-// lets you run slightly fewer lands). Scaled by deckSize/60 and clamped.
+//   base = 19.59 + 1.90 * avgMV - min(3, 0.28 * smoothCount)
+// where smoothCount is the number of cheap (<=2 MV) draw/ramp spells (each lets
+// you run slightly fewer lands). The discount is CAPPED at 3: validated against
+// current Standard lists, the uncapped -0.28/card trim under-counted cantrip-heavy
+// aggro by ~2-3 lands (its builds cast well below the pros'); even a deck full of
+// cantrips realistically wants only ~3 fewer lands. Scaled by deckSize/60, clamped.
 export function recommendLandCount(avgMV, deckSize = 60, smoothCount = 0) {
   const scale = deckSize / 60;
-  const base = (19.59 + 1.90 * avgMV - 0.28 * smoothCount) * scale;
+  const discount = Math.min(3, 0.28 * smoothCount);
+  const base = (19.59 + 1.90 * avgMV - discount) * scale;
   const lo = Math.round(16 * scale);
   const hi = Math.round(28 * scale);
   return Math.min(hi, Math.max(lo, Math.round(base)));

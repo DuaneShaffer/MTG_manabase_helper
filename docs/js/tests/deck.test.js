@@ -105,6 +105,12 @@ test("landTarget tops up with basics past the needed count", () => {
   assert.strictEqual(r.met.W, true);
 });
 
+test("recommendLandCount caps the draw/ramp discount at 3 lands", () => {
+  const base = recommendLandCount(2.0, 60, 0);
+  const manyCantrips = recommendLandCount(2.0, 60, 20); // 20 cheap cantrips
+  assert.strictEqual(base - manyCantrips, 3, `expected a 3-land cap, got ${base - manyCantrips}`);
+});
+
 test("recommendLandCount(3.0, 60) is in a sane range", () => {
   const n = recommendLandCount(3.0, 60);
   assert.ok(n >= 22 && n <= 27, `expected 22..27, got ${n}`);
