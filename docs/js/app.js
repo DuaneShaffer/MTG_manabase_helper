@@ -55,8 +55,10 @@ function digCount() {
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
-// A land if "Land" is among its card types (left of the subtype dash).
-const isLandType = (type) => (type || "").split("—")[0].includes("Land");
+// A land if "Land" is among its *front* face's card types (left of the subtype
+// dash, before the "//" face split). A transform DFC whose back is a land
+// ("Artifact // Land — Cave") is a spell you cast, not a land you play.
+const isLandType = (type) => (type || "").split("//")[0].split("—")[0].includes("Land");
 
 const idle = (fn) =>
   (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 1500 }) : setTimeout(() => fn(null), 150));
@@ -450,7 +452,7 @@ async function analyzeDeck() {
     state.deckCards = [];
     for (const c of cards) {
       const mv = manaValue(c.cost);
-      if (!/Land/.test(c.type)) state.deckCards.push({ name: c.name, mv });
+      if (!isLandType(c.type)) state.deckCards.push({ name: c.name, mv });  // transform DFCs are spells on the curve
       const cons = costConstraints(c.cost);
       const cols = Object.keys(cons);
       if (cols.length) {

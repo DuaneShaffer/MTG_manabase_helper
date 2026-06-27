@@ -21,9 +21,14 @@ def is_land(card):
     "Land Creature — ..." (manlands). The old check only accepted a bare "Land"
     / "Legendary Land" / "Basic Land", which silently dropped every dual-typed
     land from the grid.
+
+    Only the *front* face counts: a transform DFC whose back is a land (e.g.
+    "Artifact // Land — Cave", "Enchantment // Land") is a spell you cast, not a
+    land you play, so it must not be treated as a manabase land.
     """
     type_line = card.get("type_line", "") or ""
-    return "Land" in type_line.split("—")[0]
+    front = type_line.split("//")[0]
+    return "Land" in front.split("—")[0]
 
 
 def produced_colors(card):
