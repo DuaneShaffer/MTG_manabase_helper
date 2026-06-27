@@ -20,6 +20,16 @@ export async function loadMeta() {
   }
 }
 
+// Land popularity (metagame inclusion rate) for the recommender's land-quality
+// tie-break. Optional: returns null if the snapshot isn't present.
+export async function loadLandPopularity() {
+  try {
+    return await (await fetch("data/land_popularity.json")).json();
+  } catch {
+    return null;
+  }
+}
+
 async function loadCards() {
   if (_cards) return _cards;
   if (!_cardsPromise) _cardsPromise = fetch("data/cards.json").then((r) => r.json());

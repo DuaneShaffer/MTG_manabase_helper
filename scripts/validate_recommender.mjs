@@ -36,9 +36,16 @@ globalThis.window = globalThis;
 const { parseDeckText, deckEntries, cardNames } = await import(path.join(JS, "decklist.js"));
 const { requirementsForCards } = await import(path.join(JS, "requirements.js"));
 const { recommend, recommendLandCount } = await import(path.join(JS, "recommend.js"));
-const { optimizeManabase, OBJECTIVES } = await import(path.join(JS, "optimize.js"));
+const { optimizeManabase, OBJECTIVES, setLandPopularity } = await import(path.join(JS, "optimize.js"));
 const { manaValue, costConstraints } = await import(path.join(JS, "mana.js"));
 const { simulateDeck } = await import(path.join(JS, "montecarlo.js"));
+
+// Load metagame land popularity if present (built from a corpus disjoint from the
+// fixtures below), so this measures the popularity-aware recommender.
+try {
+  const pop = JSON.parse(fs.readFileSync(path.join(DATA, "land_popularity.json"), "utf8"));
+  if (pop?.lands) setLandPopularity(pop.lands);
+} catch { /* no snapshot yet — structural quality only */ }
 
 const cards = JSON.parse(fs.readFileSync(path.join(DATA, "cards.json"), "utf8"));
 const landsArr = JSON.parse(fs.readFileSync(path.join(DATA, "lands.json"), "utf8"));

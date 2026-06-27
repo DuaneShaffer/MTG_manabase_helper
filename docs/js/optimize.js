@@ -13,18 +13,27 @@ import { COLORS } from "./colors.js";
 const NONBASIC_MAX = 4; // singleton/playset rule
 
 const BASIC_TYPES = /\b(Plains|Island|Swamp|Mountain|Forest)\b/;
+const POPULARITY_WEIGHT = 50; // how strongly metagame play-rate breaks ties between equivalent lands
 
-// A rough land-quality score used to order interchangeable lands (same colors /
-// tapped / basic signature) so the better real cards are chosen first. The big
-// axes match expert consensus: untapped beats tapped, and a dual that carries
-// basic land types (fetchable, turns on check lands, feeds domain) beats a
-// typeless one. Premium fixing also skews rare/mythic. This only decides *which*
-// card fills a slot the color math already justified — not how many lands.
+// Empirical land popularity (inclusion rate in winning decks), injected at boot.
+// name -> { score: 0..1 }. Empty until setLandPopularity() is called, so the
+// structural score below still works on its own (and in tests).
+let _popularity = {};
+export function setLandPopularity(map) { _popularity = map || {}; }
+
+// A land-quality score used to order interchangeable lands (same colors / tapped /
+// basic signature) so the better real cards are chosen first. Structural axes
+// (untapped > typed dual > rare) match expert consensus; on top of that, metagame
+// play-rate among winning decks breaks ties toward what pros actually run — the
+// most reliable signal for choosing between same-color duals, and the ONLY signal
+// for utility lands the castability model can't see. This decides *which* card
+// fills a slot the color math already justified — not how many lands.
 export function landQuality(land) {
   let q = 0;
   if (!land.tapped) q += 100;                                   // untapped is king
   if ((land.type || "").includes("—") && BASIC_TYPES.test(land.type)) q += 20; // typed dual
   if (land.rarity === "rare" || land.rarity === "mythic") q += 5;
+  q += POPULARITY_WEIGHT * (_popularity[land.name]?.score || 0); // metagame play-rate
   return q;
 }
 

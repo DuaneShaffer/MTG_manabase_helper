@@ -3,10 +3,10 @@ import { costConstraints, manaValue } from "./mana.js";
 import { requirementsForCards } from "./requirements.js";
 import { castableProbability, multivariateCastable, grade } from "./hypergeometric.js";
 import { recommend as recommendManabase, recommendLandCount } from "./recommend.js";
-import { optimizeManabase, OBJECTIVES } from "./optimize.js";
+import { optimizeManabase, OBJECTIVES, setLandPopularity } from "./optimize.js";
 import { simulateDeck } from "./montecarlo.js";
 import { parseDeckText, deckEntries, cardNames } from "./decklist.js";
-import { loadLands, loadMeta, resolveDeck, loadExampleDeck } from "./data.js";
+import { loadLands, loadMeta, resolveDeck, loadExampleDeck, loadLandPopularity } from "./data.js";
 
 const STORAGE_KEY = "mtg_manabase_deck";
 
@@ -852,6 +852,8 @@ async function boot() {
     buildGrid();
     const meta = await loadMeta();
     if (meta) $("#dataMeta").textContent = `${meta.lands} lands · data ${meta.generated}`;
+    const pop = await loadLandPopularity();
+    if (pop?.lands) setLandPopularity(pop.lands);  // tie-break recommended lands toward metagame staples
   } catch (e) {
     $("#gridCount").textContent = "Couldn't load land data";
     $("#gridEmpty").hidden = false;
