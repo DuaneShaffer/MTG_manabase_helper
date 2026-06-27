@@ -402,3 +402,19 @@ def test_life_condition_land_reads_as_tapped():
     # ...but a turn-based "unless" (Starting Town) really is untapped early.
     assert build_data._enters_tapped(
         "this land enters tapped unless it's your first, second, or third turn of the game.") is False
+
+
+def test_slow_land_is_flagged_untapped_but_slow():
+    """Slow lands ('enters tapped unless you control two or more other lands') are
+    kept untapped (they're untapped from turn 3, when their decks cast), but flagged
+    `slow` so the simulator can treat them as tapped on turns 1-2."""
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    import build_data
+    out = build_data.slim_land({
+        "name": "Sundown Pass", "type_line": "Land", "produced_mana": ["R", "W"],
+        "oracle_text": ("This land enters tapped unless you control two or more other "
+                        "lands.\n{T}: Add {R} or {W}."),
+    })
+    assert out["tapped"] is False
+    assert out.get("slow") is True

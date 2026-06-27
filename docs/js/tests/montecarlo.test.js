@@ -66,4 +66,21 @@ const ok = (m) => { n++; console.log("ok -", m); };
   ok("a basic in play turns the check lands on");
 }
 
+// Slow land: tapped until you control two or more other lands, so a turn-2 spell
+// off only slow lands casts on curve less often than off true untapped lands —
+// but a turn-4 spell is unaffected (you always control >=2 other lands by then).
+{
+  const slow2 = sim([WU2], [{ colors: ["U", "W"], slow: true, tapped: false, count: 24 }]);
+  const fast2 = sim([WU2], [{ colors: ["U", "W"], tapped: false, count: 24 }]);
+  assert.ok(slow2.bySpell["WU two-drop"] < fast2.bySpell["WU two-drop"],
+    `slow < untapped for a 2-drop: ${slow2.bySpell["WU two-drop"]} vs ${fast2.bySpell["WU two-drop"]}`);
+  ok("slow lands lower on-curve odds for a turn-2 spell");
+
+  const slow4 = sim([W4], [{ colors: ["W"], slow: true, tapped: false, count: 24 }]);
+  const fast4 = sim([W4], [{ colors: ["W"], tapped: false, count: 24 }]);
+  assert.ok(Math.abs(slow4.bySpell["W four-drop"] - fast4.bySpell["W four-drop"]) < 0.01,
+    `slow ~= untapped for a 4-drop: ${slow4.bySpell["W four-drop"]} vs ${fast4.bySpell["W four-drop"]}`);
+  ok("slow lands don't penalize a turn-4 spell (>=2 other lands by then)");
+}
+
 console.log(`\n${n} montecarlo tests passed`);

@@ -192,6 +192,12 @@ def slim_land(card):
         out["colors"] = sorted("WUBRG")
         out["tapped"] = True
         out["fetch"] = True
+    # Slow land ("enters tapped unless you control two or more other lands"): kept
+    # untapped (it IS untapped from turn 3, when the midrange/control decks that run
+    # it are casting), but flagged so the simulator can treat it as tapped on turns
+    # 1–2, when you don't yet control two other lands.
+    if "two or more other lands" in low:
+        out["slow"] = True
     return out
 
 

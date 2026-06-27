@@ -31,7 +31,7 @@ function shuffle(a, rng) {
 function buildDeck(buildLands, deckSize, drawCount) {
   const deck = [];
   for (const l of buildLands) {
-    for (let i = 0; i < l.count; i++) deck.push({ colors: l.colors, tapped: !!l.tapped, basic: !!l.basic, needsBasic: !!l.needsBasic });
+    for (let i = 0; i < l.count; i++) deck.push({ colors: l.colors, tapped: !!l.tapped, basic: !!l.basic, needsBasic: !!l.needsBasic, slow: !!l.slow });
   }
   for (let i = 0; i < drawCount; i++) deck.push("draw");
   for (let i = deck.length; i < deckSize; i++) deck.push(null);
@@ -83,7 +83,10 @@ function canPayColors(pips, landColors) {
 
 function castableOnCurve(lands, pips, mv) {
   if (lands.length < mv) return false;                 // not enough lands (screw)
-  if (!lands.some((l) => !l.tapped)) return false;     // only taplands -> a turn slow
+  // A "slow land" enters tapped unless you control two or more OTHER lands, so it's
+  // untapped only once you have >=3 lands total; with <=2 it plays as a tapland.
+  const untapped = (l) => !l.tapped && (!l.slow || lands.length >= 3);
+  if (!lands.some(untapped)) return false;             // only taplands -> a turn slow
   // A "check land" (needsBasic) makes its colors only while you control a basic; with
   // no basic in play it taps for colorless only, so it can't pay a colored pip (though
   // it still counts as a land toward the drop). Any one basic turns them all on.
