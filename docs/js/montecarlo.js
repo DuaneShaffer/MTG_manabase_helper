@@ -26,12 +26,12 @@ function shuffle(a, rng) {
   return a;
 }
 
-// Deck template: a {colors, tapped} token per land copy, "draw" per dig spell,
-// null for inert filler.
+// Deck template: a {colors, tapped, basic, needsBasic} token per land copy,
+// "draw" per dig spell, null for inert filler.
 function buildDeck(buildLands, deckSize, drawCount) {
   const deck = [];
   for (const l of buildLands) {
-    for (let i = 0; i < l.count; i++) deck.push({ colors: l.colors, tapped: !!l.tapped });
+    for (let i = 0; i < l.count; i++) deck.push({ colors: l.colors, tapped: !!l.tapped, basic: !!l.basic, needsBasic: !!l.needsBasic });
   }
   for (let i = 0; i < drawCount; i++) deck.push("draw");
   for (let i = deck.length; i < deckSize; i++) deck.push(null);
@@ -84,7 +84,12 @@ function canPayColors(pips, landColors) {
 function castableOnCurve(lands, pips, mv) {
   if (lands.length < mv) return false;                 // not enough lands (screw)
   if (!lands.some((l) => !l.tapped)) return false;     // only taplands -> a turn slow
-  return canPayColors(pips, lands.map((l) => l.colors));
+  // A "check land" (needsBasic) makes its colors only while you control a basic; with
+  // no basic in play it taps for colorless only, so it can't pay a colored pip (though
+  // it still counts as a land toward the drop). Any one basic turns them all on.
+  const haveBasic = lands.some((l) => l.basic);
+  const colorsOf = (l) => (l.needsBasic && !haveBasic ? [] : l.colors);
+  return canPayColors(pips, lands.map(colorsOf));
 }
 
 /**

@@ -726,7 +726,7 @@ function doSimulate() {
   const lands = [];
   for (const { land } of state.tiles.values()) {
     const c = state.counts[land.name] || 0;
-    if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, count: c });
+    if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, basic: !!land.basic, needsBasic: !!land.needsBasic, count: c });
   }
   // Both cheap smoothers and mid-cost diggers help you find lands in a real game.
   const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount: smoothCount() + digCount() });

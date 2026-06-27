@@ -49,4 +49,21 @@ const ok = (m) => { n++; console.log("ok -", m); };
   ok("more lands raises castability");
 }
 
+// Check land (needsBasic): makes its colors only with a basic in play, so a deck
+// of nothing but check lands can never pay a colored pip — but a basic turns them on.
+{
+  const noBasic = sim([WU2], [{ colors: ["U", "W"], needsBasic: true, tapped: false, count: 24 }]);
+  assert.strictEqual(noBasic.bySpell["WU two-drop"], 0, "check lands, no basic -> colorless -> 0%");
+  ok("check lands with no basic in play can't pay colored pips");
+
+  const withBasics = sim([WU2], [
+    { colors: ["U", "W"], needsBasic: true, tapped: false, count: 16 },
+    { colors: ["W"], basic: true, tapped: false, count: 4 },
+    { colors: ["U"], basic: true, tapped: false, count: 4 },
+  ]);
+  assert.ok(withBasics.bySpell["WU two-drop"] > 0.3,
+    "basics turn the check lands on: " + withBasics.bySpell["WU two-drop"]);
+  ok("a basic in play turns the check lands on");
+}
+
 console.log(`\n${n} montecarlo tests passed`);
