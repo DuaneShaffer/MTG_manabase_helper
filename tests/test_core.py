@@ -388,3 +388,17 @@ def test_land_basic_check_land_gates_color_on_a_basic():
     assert out["gatedColors"] == ["U", "W"]   # ...but both colors are gated
     assert out.get("needsBasic") is True
     assert "typeGate" not in out              # gated on a basic, not a basic land type
+
+
+def test_life_condition_land_reads_as_tapped():
+    """A land that enters tapped 'unless a player has 13 or less life' (the
+    Duskmourn cycle) is effectively tapped while you're curving out — nobody is at
+    low life yet — so it should not be treated as an untapped source."""
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    import build_data
+    assert build_data._enters_tapped(
+        "this land enters tapped unless a player has 13 or less life.\n{t}: add {w} or {u}.") is True
+    # ...but a turn-based "unless" (Starting Town) really is untapped early.
+    assert build_data._enters_tapped(
+        "this land enters tapped unless it's your first, second, or third turn of the game.") is False

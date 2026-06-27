@@ -48,6 +48,12 @@ def _enters_tapped(oracle):
     """
     for sentence in re.split(r"[.\n]", oracle):
         if "enters tapped" in sentence or "enters the battlefield tapped" in sentence:
+            # A life-total condition ("enters tapped unless a player has 13 or less
+            # life") is essentially never met while you're curving out, so the land
+            # is effectively a tapland in the turns that matter — treat it as tapped
+            # despite the "unless" (the Duskmourn cycle: Abandoned Campground, etc.).
+            if "unless" in sentence and "less life" in sentence:
+                return True
             conditional = any(kw in sentence for kw in ("unless", "you may pay", "if you don"))
             return not conditional
     return False
