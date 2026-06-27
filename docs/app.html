@@ -4,6 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Manabase — Standard source calculator</title>
+  <meta name="description" content="Build and grade a Standard manabase: per-color source requirements, card-by-card castability, a recommended set of lands, and a Monte-Carlo check.">
+  <meta property="og:title" content="Manabase — Standard source calculator">
+  <meta property="og:description" content="Build and grade a Standard manabase: per-color source requirements, card-by-card castability, and a recommended set of lands.">
+  <meta property="og:image" content="https://duaneshaffer.github.io/MTG_manabase_helper/og-image.png">
+  <meta property="og:url" content="https://duaneshaffer.github.io/MTG_manabase_helper/app.html">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Manabase — Standard source calculator">
+  <meta name="twitter:description" content="Build and grade a Standard manabase: per-color source requirements, card-by-card castability, and a recommended set of lands.">
+  <meta name="twitter:image" content="https://duaneshaffer.github.io/MTG_manabase_helper/og-image.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -64,6 +74,16 @@
         </div>
         <p class="why-note" id="landWhyNote" hidden></p>
 
+        <!-- Your current manabase, editable in place — the same row shape as the
+             Recommend drawer so "your build" and "recommended" read alike. -->
+        <div class="build-list-wrap" id="buildWrap" hidden>
+          <div class="build-head">
+            <span class="build-title">Your build</span>
+            <span class="build-dilution" id="buildDilution"></span>
+          </div>
+          <div class="build-list" id="buildList"></div>
+        </div>
+
         <!-- Sticky grade HUD: the overall grade follows you as you edit lands -->
         <div class="hud-grade" id="hudGrade" hidden>
           <div class="overall" id="overallGrade">
@@ -113,6 +133,8 @@
         <span id="gridCount">Loading lands…</span>
         <div class="grid-controls">
           <div class="seg" id="landMode" role="group" aria-label="Which lands to show">
+            <button class="seg-btn" data-mode="suggested"
+              title="The lands the recommender would reach for in your colors — the same picks you'd get from Build manabase, narrowed down from the full pool.">Suggested</button>
             <button class="seg-btn" data-mode="relevant">Relevant</button>
             <button class="seg-btn" data-mode="mycolors">My colors</button>
             <button class="seg-btn" data-mode="utility">Utility</button>
