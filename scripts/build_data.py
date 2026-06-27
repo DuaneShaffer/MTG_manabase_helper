@@ -81,6 +81,12 @@ def analyze_land_colors(card):
     Scryfall's ``produced_mana`` over-reports (it lists every color a land *can*
     make, however restricted/costly), so we parse the abilities instead.
     """
+    low = _oracle(card).lower()
+    # "Becomes any basic type" lands (e.g. Multiversal Passage): on entry they turn
+    # into a basic land of a chosen type, so they fix any one color — a flexible
+    # five-color source, like Starting Town / a painland.
+    if "choose a basic land type" in low and "the chosen type" in low:
+        return sorted("WUBRG"), [], None, [], []
     produced = set(card.get("produced_mana") or []) & set("WUBRG")
     type_line = card.get("type_line", "") or ""
     if not produced:
@@ -144,6 +150,17 @@ def slim_land(card):
     if gated_colors and type_gate:
         out["gatedColors"] = gated_colors
         out["typeGate"] = type_gate
+    # Basic-fetch lands (Fabled Passage, Escape Tunnel): sacrifice to search up a
+    # basic. They fix any color you run basics for, but the fetched land enters
+    # tapped, so model them as a slow (tapped) flexible source. Exclude lands that
+    # already make mana directly (e.g. Demolition Field makes {C} + can fetch) —
+    # those are utility, not fetches.
+    low = _oracle(card).lower()
+    if ("search your library for a basic land" in low and "sacrifice" in low
+            and not card.get("produced_mana")):
+        out["colors"] = sorted("WUBRG")
+        out["tapped"] = True
+        out["fetch"] = True
     return out
 
 
