@@ -168,5 +168,6 @@ lib64
 #  - the Python test fixture
 !docs/data/*.json
 !docs/package.json
+!docs/manifest.json
 !tests/fixtures/*.json
 /.idea/
