@@ -95,12 +95,11 @@
             <span class="og-letter"></span>
             <span class="og-text"></span>
           </div>
-          <div class="grade-legend" aria-label="Grade scale (chance the colors are ready on curve)">
-            <span class="gl" data-g="A">A</span><span class="gl-n">95+</span>
-            <span class="gl" data-g="B">B</span><span class="gl-n">90</span>
-            <span class="gl" data-g="C">C</span><span class="gl-n">80</span>
-            <span class="gl" data-g="D">D</span><span class="gl-n">65</span>
-            <span class="gl" data-g="F">F</span><span class="gl-n">&lt;65</span>
+          <div class="grade-legend" aria-label="Reliability scale — chance a card is castable on curve">
+            <span class="gl-n">60%</span>
+            <span class="grade-ramp" aria-hidden="true"></span>
+            <span class="gl-n">99%</span>
+            <span class="gl-cap">castable on curve</span>
           </div>
         </div>
       </section>
@@ -113,23 +112,22 @@
             <span class="strip-title">Your deck — castability on curve</span>
             <button class="info-dot" id="gradeInfo" aria-label="How grades work" aria-expanded="false">i</button>
           </div>
-          <!-- Command center: Build it · Test it · Export it -->
+          <!-- Command center: Build it · Export it -->
           <div class="deck-cmd">
             <button class="btn btn-gold" id="recommendBtn" disabled>Build manabase</button>
-            <button class="btn btn-ghost sim-btn" id="simBtn"
-              title="Play out thousands of real games (shuffle, mulligan, draw) and report true on-curve castability — this one DOES account for mana screw and flood.">Simulate</button>
             <button class="btn btn-ghost" id="exportBtn" disabled>Export</button>
           </div>
         </div>
         <p class="grade-note" id="gradeNote" hidden>
-          Each card carries two readings. The <strong>badge</strong> (bottom-right, a letter +
-          %) is the <strong>model</strong> grade: the chance the right <strong>colors</strong> are
-          available by the turn you'd cast the card, assuming you keep an opener and hit your land
-          drops (Frank Karsten's model) — so it tops out at 99%, never a guaranteed 100%, and
-          climbs as you add lands. It does <strong>not</strong> model raw mana screw or flood. Press
-          <strong>Simulate</strong> and a second pill (bottom-left) appears: the <strong>sim</strong>
-          grade plays out thousands of real games and reports true on-curve castability, screw
-          included. The land-count target is your safeguard against flood.
+          Each card carries two readings, both updating live as you edit the build. The lower pill
+          (marked with a <strong>mana-pie</strong>) is the <strong>colors</strong> reading — Frank
+          Karsten's model: the chance the right colors are available by the turn you'd cast the card
+          <em>assuming you hit your land drops</em>. It tops out at 99% and isolates color quality
+          from everything else. The pill above it (marked with a <strong>clock</strong>) is the
+          <strong>lands-on-time</strong> reading — it plays out thousands of real games (shuffle,
+          mulligan, draw) and reports true on-curve castability <em>including mana screw and
+          flood</em>. Read them together: if the mana-pie is high but the clock is low, your colors
+          are fine and you're screwing or flooding — adjust the land <em>count</em>, not the fixing.
         </p>
         <div class="spell-grid" id="spellGrid"></div>
       </section>

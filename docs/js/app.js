@@ -4,6 +4,7 @@ import { requirementsForCards } from "./requirements.js";
 import { castableProbability, multivariateCastable, grade } from "./hypergeometric.js";
 import { recommend as recommendManabase, recommendLandCount } from "./recommend.js";
 import { optimizeManabase, OBJECTIVES, setLandPopularity } from "./optimize.js";
+import { manabaseAdvice } from "./advice.js";
 import { simulateDeck } from "./montecarlo.js";
 import { parseDeckText, deckEntries, cardNames } from "./decklist.js";
 import { loadLands, loadMeta, resolveDeck, loadExampleDeck, loadLandPopularity } from "./data.js";
@@ -525,6 +526,23 @@ async function analyzeDeck() {
     const avg = state.deckCards.length
       ? state.deckCards.reduce((s, c) => s + c.mv, 0) / state.deckCards.length : 3;
     state.avgMV = avg;
+
+    // How much the deck leans on each color (total colored pips) and the card
+    // setting each color's requirement — feeds the recommender's shortfall
+    // weighting and the actionable advice when a color can't be fully covered.
+    state.demand = {}; state.colorInfo = {};
+    for (const col of COLORS) { state.demand[col] = 0; state.colorInfo[col] = { cards: 0, driver: null }; }
+    for (const sp of state.spells) {
+      for (const col of Object.keys(sp.pips)) {
+        const pips = sp.pips[col];
+        state.demand[col] += pips * sp.qty;
+        state.colorInfo[col].cards += sp.qty;
+        const d = state.colorInfo[col].driver;
+        if (!d || pips > d.pips || (pips === d.pips && sp.qty > d.qty)) {
+          state.colorInfo[col].driver = { name: sp.name, pips, qty: sp.qty };
+        }
+      }
+    }
     const newDeck = text !== state.lastImportedDeck;
 
     // Split draw/ramp by mana value: cheap (<=2 MV) smooths early drops and trims
@@ -616,11 +634,19 @@ function renderSpellStrip() {
     img.addEventListener("load", () => img.classList.add("loaded"));
     if (spell.image) img.src = spell.image;
     const qty = el("span", "qty"); qty.textContent = spell.qty + "×";
-    const badge = el("div", "badge");           // static (Karsten) grade — bottom-right
-    badge.innerHTML = `<span class="bl">–</span><span class="bp"></span>`;
-    const simPill = el("div", "sim-pill");      // simulated grade — bottom-left, after Simulate
+    // Model reading — the mana-pie icon flags it as the COLORS %.
+    const badge = el("div", "badge");
+    badge.innerHTML =
+      `<span class="axis-ico colors" title="Colors: are the right colors available by the turn you'd cast this, assuming you hit your land drops?" aria-label="Color reliability"></span>` +
+      `<span class="bp"></span>`;
+    // Simulated reading — the clock icon flags it as the LANDS-ON-TIME %.
+    const simPill = el("div", "sim-pill");
     simPill.hidden = true;
-    simPill.innerHTML = `sim <span class="sp-p"></span>`;
+    simPill.innerHTML =
+      `<svg class="axis-ico timing" viewBox="0 0 16 16" role="img" aria-label="Real games: lands on time"><title>Real games: do you draw enough lands, on time? True on-curve odds including mana screw &amp; flood.</title>` +
+      `<circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.4"/>` +
+      `<path d="M8 8 L8 4.2 M8 8 L10.7 9.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>` +
+      `<span class="sp-p"></span>`;
     cell.append(ph, img, qty, badge, simPill);
     if (spell.smooth) {                          // cheap (<=2 MV) draw/ramp — trims lands + helps sim
       const tag = el("button", "smooth-tag");
@@ -640,11 +666,12 @@ function renderSpellStrip() {
   }
 }
 
-let _gradeTimer = null;
+let _gradeTimer = null, _simTimer = null;
 function gradeBuild() {
   if (!state.spells.length) return;
   clearTimeout(_gradeTimer);
-  _gradeTimer = setTimeout(doGrade, 90);  // debounce rapid clicks (compute is local+cached)
+  // Model grades first (instant), then the screw-aware sim during idle time.
+  _gradeTimer = setTimeout(() => { doGrade(); scheduleSim(); }, 90);
 }
 
 function doGrade() {
@@ -662,23 +689,22 @@ function doGrade() {
       for (const c of cols) srcByColor[c] = sources[c];
       prob = multivariateCastable(spell.pips, spell.mv, srcByColor, state.deckSize, t.total);
     }
-    const g = grade(prob);
     const cell = state.spellCells.get(spell.name);
     if (cell) {
-      cell.dataset.g = g.letter;
-      cell.querySelector(".bl").textContent = g.letter;
+      cell.dataset.g = grade(prob).letter;   // data-g drives the gentle color tint only
       cell.querySelector(".bp").textContent = pct(prob);
-      cell.querySelector(".sim-pill").hidden = true;  // sim is stale once the build changes
+      // The sim pill keeps its prior value until scheduleSim() refreshes it a beat
+      // later — no flicker on every edit.
     }
     worst = Math.min(worst, prob);
   }
   state.staticWorst = worst;
   $("#hudGrade").hidden = false;
   const og = $("#overallGrade");
-  const g = grade(worst);
-  og.querySelector(".og-letter").textContent = g.letter;
-  og.querySelector(".og-letter").style.background = `var(--grade-${g.letter})`;
-  og.querySelector(".og-text").textContent = `Weakest card ${pct(worst)} — ${g.label} · Simulate for true odds`;
+  const ogl = og.querySelector(".og-letter");
+  ogl.textContent = pct(worst);
+  ogl.dataset.g = grade(worst).letter;
+  og.querySelector(".og-text").textContent = `Weakest card on curve, colors only`;
 }
 
 // Display percentage, capped at 99% — the closed-form model conditions on hitting
@@ -688,47 +714,41 @@ function pct(p) {
   return Math.min(99, Math.round(p * 100)) + "%";
 }
 
-/* ---------- Monte-Carlo validator (on demand; includes mana screw) ---------- */
-function runSimulation() {
+/* ---------- Monte-Carlo validator (auto, lazy; includes mana screw) ---------- */
+// Runs itself a beat after the model grades, during idle time, so the true
+// (screw-aware) odds stay current without the user pressing anything.
+function scheduleSim() {
+  clearTimeout(_simTimer);
+  _simTimer = setTimeout(() => idle(doSimulate), 130);
+}
+function doSimulate() {
   if (!state.spells.length) return;
-  clearTimeout(_gradeTimer);  // cancel the debounce…
-  doGrade();                  // …and refresh the static grades now, so both are shown
-  const btn = $("#simBtn");
-  btn.disabled = true;
-  btn.textContent = "Simulating…";
-  // Defer so the button label paints before the (synchronous) sim runs.
-  setTimeout(() => {
-    const lands = [];
-    for (const { land } of state.tiles.values()) {
-      const c = state.counts[land.name] || 0;
-      if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, count: c });
-    }
-    // Both cheap smoothers and mid-cost diggers help you find lands in a real game.
-    const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount: smoothCount() + digCount() });
-    // Populate the simulated pill on each card — the static badge stays as-is, so
-    // both numbers are visible side by side.
-    for (const spell of state.spells) {
-      const p = res.bySpell[spell.name];
-      const g = grade(p);
-      const cell = state.spellCells.get(spell.name);
-      if (!cell) continue;
-      const pill = cell.querySelector(".sim-pill");
-      pill.dataset.g = g.letter;
-      pill.querySelector(".sp-p").textContent = pct(p);
-      pill.hidden = false;
-    }
-    // Overall: show static (assumes lands) alongside simulated (includes screw).
-    $("#hudGrade").hidden = false;
-    const og = $("#overallGrade");
-    const sg = grade(res.overall);
-    og.querySelector(".og-letter").textContent = sg.letter;
-    og.querySelector(".og-letter").style.background = `var(--grade-${sg.letter})`;
-    og.querySelector(".og-text").textContent =
-      `Weakest: ${pct(state.staticWorst != null ? state.staticWorst : res.overall)} static · ` +
-      `${pct(res.overall)} simulated (${res.trials / 1000}k games, incl. screw)`;
-    btn.textContent = "Re-simulate";
-    btn.disabled = false;
-  }, 20);
+  const lands = [];
+  for (const { land } of state.tiles.values()) {
+    const c = state.counts[land.name] || 0;
+    if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, count: c });
+  }
+  // Both cheap smoothers and mid-cost diggers help you find lands in a real game.
+  const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount: smoothCount() + digCount() });
+  // Refresh the simulated pill on each card — the model badge stays as-is, so both
+  // readings are visible together.
+  for (const spell of state.spells) {
+    const p = res.bySpell[spell.name];
+    const cell = state.spellCells.get(spell.name);
+    if (!cell) continue;
+    const pill = cell.querySelector(".sim-pill");
+    pill.dataset.g = grade(p).letter;   // tint only
+    pill.querySelector(".sp-p").textContent = pct(p);
+    pill.hidden = false;
+  }
+  // Overall headline = the true (simulated) weakest; the model figure rides along as context.
+  $("#hudGrade").hidden = false;
+  const og = $("#overallGrade");
+  const ogl = og.querySelector(".og-letter");
+  ogl.textContent = pct(res.overall);
+  ogl.dataset.g = grade(res.overall).letter;
+  og.querySelector(".og-text").textContent =
+    `Weakest card in real games, incl. screw · ${pct(state.staticWorst != null ? state.staticWorst : res.overall)} on colors alone`;
 }
 
 /* ---------- recommendation ---------- */
@@ -780,7 +800,7 @@ async function computeRecOptions() {
     REC_OBJECTIVES.map((objective) =>
       optimizeManabase({
         requirements: state.requirements, lands: state.lands,
-        landTarget: state.landTarget, objective,
+        landTarget: state.landTarget, objective, demandWeights: state.demand,
       }).then((rec) => ({ objective, rec }), () => null)),
   );
   const options = [];
@@ -825,6 +845,7 @@ async function computeAllRecs() {
   $("#recApply").disabled = true;
   $("#recOptions").innerHTML = "";
   $("#recList").innerHTML = "";
+  renderAdvice(null);
   $("#recSummary").textContent = "Working out your options…";
 
   try {
@@ -835,6 +856,7 @@ async function computeAllRecs() {
       state.recOptions = options;
       renderRecOptions(options);
       selectRecOption(0);
+      renderAdvice(options);
       return;
     }
 
@@ -870,6 +892,34 @@ function renderRecOptions(options) {
       `<span class="ro-stat">${opt.rec.total} lands · ${opt.rec.taplands} tapped</span>`;
     wrap.appendChild(btn);
   });
+}
+
+// Actionable advice for the chosen target: what's covered, and — when a color
+// can't be — the concrete levers (add lands, accept the risk, cut the pip-heavy
+// card). Lives just under the option list; null clears it.
+function renderAdvice(options) {
+  let box = $("#recAdvice");
+  if (!box) {
+    box = el("div", "rec-advice");
+    box.id = "recAdvice";
+    const sum = $("#recSummary");
+    sum.parentNode.insertBefore(box, sum);  // above the per-option summary line
+  }
+  box.innerHTML = "";
+  if (!options || !options.length) { box.hidden = true; return; }
+  const advice = manabaseAdvice(options, {
+    requirements: state.requirements, landTarget: state.landTarget,
+    demand: state.demand, colorInfo: state.colorInfo,
+  });
+  box.dataset.status = advice.status;
+  const h = el("p", "adv-headline"); h.textContent = advice.headline; box.appendChild(h);
+  for (const d of advice.detail) { const p = el("p", "adv-detail"); p.textContent = d; box.appendChild(p); }
+  if (advice.levers.length) {
+    const ul = el("ul", "adv-levers");
+    for (const lv of advice.levers) { const li = el("li"); li.textContent = lv; ul.appendChild(li); }
+    box.appendChild(ul);
+  }
+  box.hidden = false;
 }
 
 function selectRecOption(i) {
@@ -1003,7 +1053,6 @@ function wireEvents() {
     const btn = e.target.closest(".seg-btn");
     if (btn) setLandMode(btn.dataset.mode);
   });
-  $("#simBtn").addEventListener("click", runSimulation);
   $("#gradeInfo").addEventListener("click", (e) => {
     const note = $("#gradeNote");
     note.hidden = !note.hidden;
