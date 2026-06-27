@@ -433,8 +433,8 @@ function openSmoothPop(name, qty, anchorEl, kind) {
   $("#smoothCountVal").textContent = ov[name] ?? qty;
   const cops = `cop${qty === 1 ? "y" : "ies"}`;
   $("#smoothOf").textContent = _smoothPopKind === "dig"
-    ? `of ${qty} ${cops} dig toward lands in Simulate (they don't change your land count).`
-    : `of ${qty} ${cops} count toward the land target & Simulate.`;
+    ? `of ${qty} ${cops} dig toward lands in the simulation (they don't change your land count).`
+    : `of ${qty} ${cops} count toward the land target & the simulation.`;
   const r = anchorEl.getBoundingClientRect();
   pop.style.left = Math.min(window.innerWidth - 224, Math.max(6, r.left - 100)) + "px";
   pop.style.top = (r.bottom + 6) + "px";
@@ -643,7 +643,7 @@ function renderSpellStrip() {
     const simPill = el("div", "sim-pill");
     simPill.hidden = true;
     simPill.innerHTML =
-      `<svg class="axis-ico timing" viewBox="0 0 16 16" role="img" aria-label="Real games: lands on time"><title>Real games: do you draw enough lands, on time? True on-curve odds including mana screw &amp; flood.</title>` +
+      `<svg class="axis-ico timing" viewBox="0 0 16 16" role="img" aria-label="Real games: lands on time"><title>Real games: do you draw enough lands, on time? A simulated on-curve rate including mana screw &amp; flood.</title>` +
       `<circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.4"/>` +
       `<path d="M8 8 L8 4.2 M8 8 L10.7 9.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>` +
       `<span class="sp-p"></span>`;

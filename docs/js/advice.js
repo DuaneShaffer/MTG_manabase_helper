@@ -101,7 +101,7 @@ export function manabaseAdvice(options, ctx) {
     levers.push(`Add ~${deficit} more land${deficit === 1 ? "" : "s"} (≈${landTarget + deficit} total) to reach ${req} ${lc} sources.`);
     levers.push(`Or keep ${landTarget} and accept it — ${have} of ${req} sources means ${driver ? driver.name : `your ${lc} cards`} comes down a turn late now and then.`);
     if (driver && (driver.qty || 0) <= 4 && driver.pips >= 2) {
-      levers.push(`Or cut ${driver.name} — its ${driver.pips} ${lc} pips are the only thing forcing ${req} sources.`);
+      levers.push(`Or cut ${driver.name} — its ${driver.pips} ${lc} pips are what pushes the requirement to ${req}.`);
     }
     return { status: "short-one", headline: `${name(c)} gives a little at ${landTarget} lands.`, detail, levers };
   }
