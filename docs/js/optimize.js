@@ -11,6 +11,7 @@
 import { COLORS } from "./colors.js";
 
 const NONBASIC_MAX = 4; // singleton/playset rule
+const BASIC_BASE = 6;   // a "real basic base": at/above this, one basic reliably turns on the Marvel check-land cycle (Gleaming Bastion etc.)
 
 const BASIC_TYPES = /\b(Plains|Island|Swamp|Mountain|Forest)\b/;
 const POPULARITY_WEIGHT = 50; // how strongly metagame play-rate breaks ties between equivalent lands
@@ -261,34 +262,49 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
     ints["over_" + c] = 1;
   }
 
-  // Gated-color credit: a gated color only counts up to how many lands enable it.
-  // Two gates share this machinery:
-  //   Verge      — enabled by lands of a matching basic TYPE (typed duals included).
-  //   Check land — enabled by actual BASIC lands (the Marvel cycle: taps for {C}
-  //                otherwise). Without basics it contributes no colored sources.
-  // Model it as an aux variable per (land, gated color):
-  //   credit ≤ this land's copies   AND   credit ≤ Σ(enabling lands)
-  // and route that credit (not the land itself) into the color minimum, so the
-  // solver only leans on the gated color when the build actually supplies enablers.
+  // Gated-color credit: a gated color routes through an aux credit variable (not the
+  // land itself), capped by how much its enabler is in the build, so it can't be
+  // leaned on without that enabler. Two gates, two enablers:
+  //   Verge      — enabled by lands of a matching basic TYPE (typed duals included);
+  //                credit ≤ this land's copies AND ≤ Σ(matching-type lands).
+  //   Check land — the Marvel cycle taps for {C} until you control a basic, but ONE
+  //                basic turns the WHOLE set into untapped duals. So all check lands
+  //                share a single switch `basics_on`, which can be 1 only when the
+  //                build runs a real basic base (≥ BASIC_BASE basics); then each
+  //                check land's colors count up to its copies, else they're colorless.
+  const CHECK_BIGM = Math.max(landTarget || 0, 40); // > any possible credit (sources ≤ lands)
+  if (pool.some((c) => c.needsBasic && c.gated.some((g) => constraints["col_" + g]))) {
+    variables.basics_on = { basicgate: -BASIC_BASE, basics_cap: 1 };
+    ints.basics_on = 1;
+    constraints.basicgate = { min: 0 };     // Σ basics − BASIC_BASE·basics_on ≥ 0  (on ⇒ ≥ base)
+    constraints.basics_cap = { max: 1 };    // binary
+    for (const cand of pool) if (cand.basic) variables[cand.name].basicgate = (variables[cand.name].basicgate || 0) + 1;
+  }
+
   pool.forEach((cand, i) => {
     if (!cand.gated.length || (!cand.typeGate.length && !cand.needsBasic)) return;
-    const supporters = cand.needsBasic
-      ? pool.filter((p) => p.basic)
-      : pool.filter((p) => p.types.some((t) => cand.typeGate.includes(t)));
+    const supporters = cand.needsBasic ? null : pool.filter((p) => p.types.some((t) => cand.typeGate.includes(t)));
     for (const c of cand.gated) {
       if (!constraints["col_" + c]) continue; // gated color not needed
       const aux = `vcredit_${i}_${c}`;
       const leCopies = `vle_copies_${i}_${c}`;
-      const leSupport = `vle_supp_${i}_${c}`;
-      constraints[leCopies] = { min: 0 };   // verge_copies − credit ≥ 0
-      constraints[leSupport] = { min: 0 };  // Σ supporters − credit ≥ 0
+      constraints[leCopies] = { min: 0 };    // this land's copies − credit ≥ 0
       variables[cand.name][leCopies] = (variables[cand.name][leCopies] || 0) + 1;
-      for (const s of supporters) variables[s.name][leSupport] = (variables[s.name][leSupport] || 0) + 1;
-      variables[aux] = { ["col_" + c]: 1, [leCopies]: -1, [leSupport]: -1 };
+      variables[aux] = { ["col_" + c]: 1, [leCopies]: -1 };
+      if (cand.needsBasic) {
+        const gz = `vgatez_${i}_${c}`;
+        constraints[gz] = { min: 0 };        // CHECK_BIGM·basics_on − credit ≥ 0  (0 without a basic base)
+        variables.basics_on[gz] = (variables.basics_on[gz] || 0) + CHECK_BIGM;
+        variables[aux][gz] = -1;
+      } else {
+        const leSupport = `vle_supp_${i}_${c}`;
+        constraints[leSupport] = { min: 0 }; // Σ matching-type lands − credit ≥ 0
+        for (const s of supporters) variables[s.name][leSupport] = (variables[s.name][leSupport] || 0) + 1;
+        variables[aux][leSupport] = -1;
+      }
       // An enabled gated color from an untapped land IS an untapped source, so it
       // earns the untapped objective's per-source reward here (mirrors landCost's
-      // −neededCount) — but only up to what `supporters` actually enable, so the
-      // solver gains nothing from a gated land its build can't turn on.
+      // −neededCount) — but only up to what its enabler actually turns on.
       if (objective === "untapped" && !cand.tapped) variables[aux].cost = -1;
       if (overfixWeight > 0 && constraints["ovf_" + c]) variables[aux]["ovf_" + c] = 1; // gated credit counts toward over-supply too
       ints[aux] = 1;
