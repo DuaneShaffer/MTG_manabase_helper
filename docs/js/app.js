@@ -822,18 +822,11 @@ async function computeRecOptions() {
   return options;
 }
 
-// Seeded PRNG (mulberry32). Battle-tested scores every candidate build on the SAME
-// shuffles (common random numbers), so the comparison between builds is low-variance
-// and the pick is deterministic — even though each absolute number is still noisy.
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// Battle-tested scores every candidate build on the SAME per-trial draws (common
+// random numbers via simulateDeck's `seed`), so the comparison between builds is
+// low-variance and the pick is deterministic — even though each absolute number is
+// still noisy. Per-trial seeding keeps trial t in sync across builds even when they
+// mulligan at different rates.
 const BATTLE_SEED = 0x9e3779b9;
 
 // The "Battle-tested" option: ask the ILP for candidate bases across a range of land
@@ -843,9 +836,11 @@ const BATTLE_SEED = 0x9e3779b9;
 // null (no spells / solver down) — callers fall back to the ILP options.
 async function computeBattleTested() {
   const drawCount = smoothCount() + digCount();
-  // Re-seed per call so each candidate faces the identical draw sequence.
+  // Per-trial common random numbers: every candidate faces the identical luck on
+  // each trial (robust to builds mulliganing at different rates), so the comparison
+  // is low-variance and the pick is deterministic.
   const simulate = (buildLands, deckSize, trials) =>
-    simulateDeck(state.spells, buildLands, deckSize, { trials, drawCount, rng: mulberry32(BATTLE_SEED) });
+    simulateDeck(state.spells, buildLands, deckSize, { trials, drawCount, seed: BATTLE_SEED });
   const pick = await battleTested({
     requirements: state.requirements, lands: state.lands, landTarget: state.landTarget,
     demandWeights: state.demand, spells: state.spells, deckSize: state.deckSize, simulate,

@@ -83,4 +83,34 @@ const ok = (m) => { n++; console.log("ok -", m); };
   ok("slow lands don't penalize a turn-4 spell (>=2 other lands by then)");
 }
 
+// A numeric `seed` makes a run fully reproducible.
+{
+  const opts = { trials: 2000, seed: 99 };
+  const a = simulateDeck([W4], [{ colors: ["W"], tapped: false, count: 17 }], 60, opts);
+  const b = simulateDeck([W4], [{ colors: ["W"], tapped: false, count: 17 }], 60, opts);
+  assert.strictEqual(a.bySpell["W four-drop"], b.bySpell["W four-drop"], "same seed -> identical");
+  ok("a seeded simulation run is reproducible");
+}
+
+// Common random numbers: per-trial seeding gives a LOWER-variance build-vs-build
+// comparison than a single shared RNG stream (which desyncs once two builds mulligan
+// at different rates). Estimate (B - A) across several seeds under both; CRN's spread
+// should be smaller.
+{
+  const A = [{ colors: ["W"], tapped: false, count: 16 }];   // screw-prone
+  const B = [{ colors: ["W"], tapped: false, count: 24 }];   // more lands, different mulligan rate
+  // Well-spread, high-entropy seeds: mulberry32 reseeded per trial needs them —
+  // tiny sequential seeds (1,2,3…) correlate and make the variance estimate unreliable.
+  const SEEDS = Array.from({ length: 24 }, (_, i) => ((i * 2654435761) >>> 0) ^ 0x1234567);
+  const variance = (xs) => { const m = xs.reduce((p, q) => p + q, 0) / xs.length; return xs.reduce((p, q) => p + (q - m) ** 2, 0) / xs.length; };
+  const sub = (oB, oA) => oB.bySpell["W four-drop"] - oA.bySpell["W four-drop"];
+  const diffCRN = SEEDS.map((s) =>
+    sub(simulateDeck([W4], B, 60, { trials: 3000, seed: s }), simulateDeck([W4], A, 60, { trials: 3000, seed: s })));
+  const diffShared = SEEDS.map((s) =>
+    sub(simulateDeck([W4], B, 60, { trials: 3000, rng: seeded(s) }), simulateDeck([W4], A, 60, { trials: 3000, rng: seeded(s) })));
+  assert.ok(variance(diffCRN) < variance(diffShared),
+    `per-trial CRN variance ${variance(diffCRN).toExponential(2)} should beat shared-stream ${variance(diffShared).toExponential(2)}`);
+  ok("per-trial common random numbers lower the build-vs-build comparison variance");
+}
+
 console.log(`\n${n} montecarlo tests passed`);

@@ -18,6 +18,18 @@
 
 const isLand = (c) => c !== null && typeof c === "object";
 
+// Seeded PRNG (mulberry32) — lets the caller put every candidate build on the same
+// per-trial draws (common random numbers) for low-variance comparisons.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function shuffle(a, rng) {
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
@@ -103,13 +115,20 @@ function castableOnCurve(lands, pips, mv) {
 export function simulateDeck(spells, buildLands, deckSize, opts = {}) {
   const trials = opts.trials || 5000;
   const onPlay = opts.onPlay !== false;
-  const rng = opts.rng || Math.random;
   const drawCount = opts.drawCount || 0;
+  // Draw randomness. An explicit `rng` shares ONE stream across all trials (test
+  // path). A numeric `seed` instead reseeds PER TRIAL, so trial t faces identical
+  // luck across different candidate builds — true common random numbers, robust to
+  // builds that mulligan at different rates (which consume different amounts of RNG
+  // and would otherwise desync a single shared stream after the first divergent
+  // trial). Default: unseeded Math.random.
+  const sharedRng = opts.rng || (opts.seed == null ? Math.random : null);
   const template = buildDeck(buildLands, deckSize, drawCount);
   const success = {};
   for (const s of spells) success[s.name] = 0;
 
   for (let t = 0; t < trials; t++) {
+    const rng = sharedRng || mulberry32((opts.seed ^ Math.imul(t + 1, 0x9e3779b9)) >>> 0);
     const { hand, library } = drawGame(template.slice(), rng);
     for (const s of spells) {
       const draws = onPlay ? s.mv - 1 : s.mv;   // natural draws by the cast turn
