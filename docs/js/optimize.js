@@ -68,6 +68,20 @@ const OFF_PENALTY = 0.5;
 // castability), so the exact value isn't sensitive.
 const OVERFIX_WEIGHT = 2;
 
+// Utility (colorless, non-basic) lands — Great Hall, Demolition Field, Fabled
+// Passage, etc. The model can't see what their abilities are *worth*, so:
+//   - ADMIT only metagame-proven ones (popularity ≥ UTIL_POP_MIN), so we never
+//     recommend a no-name utility land — popularity is the only "is this worth a
+//     slot" signal we have, and an empty popularity map (e.g. in tests) admits none.
+//   - VALUE them by that popularity (which one to prefer).
+//   - BOUND them: a global cap (MAX_UTILITY) plus the hard colour minimums, which
+//     mean a utility land can only ever take an *excess* slot — never one that would
+//     drop a colour below its reliability threshold. So once colour is covered the
+//     budget flows to high-value utility lands instead of redundant fixing/basics.
+const UTIL_POP_MIN = 0.1;   // ~appeared in 3+ of the sampled winning decks
+const UTIL_REWARD = 5;      // reward scale (× popularity); only needs to beat a redundant basic/dual in an excess slot
+const MAX_UTILITY = 3;      // most utility lands any one build will run
+
 // Lazy-load the vendored solver. In the browser it injects a classic <script>
 // that sets window.solver; in Node a test can pre-set globalThis.solver and this
 // returns it without touching the DOM.
@@ -106,17 +120,24 @@ export function candidatePool(requirements, lands) {
   const groups = new Map();
   for (const land of [...lands].sort((a, b) => a.name.localeCompare(b.name))) {
     const colors = COLORS.filter((c) => (land.colors || []).includes(c));
-    if (!colors.some((c) => needed.has(c))) continue; // colorless / off-color lands can't help a color min
+    // A proven utility land: colorless, non-basic, and run often enough in winning
+    // decks to be worth a slot. Kept (each as its own group) even though it makes no
+    // needed colour; everything else colourless / off-colour is still dropped.
+    const isUtility = colors.length === 0 && !land.basic && (_popularity[land.name]?.score || 0) >= UTIL_POP_MIN;
+    if (!isUtility && !colors.some((c) => needed.has(c))) continue; // can't help a colour min and not worthwhile utility
     const gated = COLORS.filter((c) => (land.gatedColors || []).includes(c)); // Verge: gated on a basic type
     // Verges are NOT interchangeable with true duals of the same colors, so the
-    // gated color is part of the signature (keeps them in their own group).
-    const sig = colors.join("") + "|" + (land.tapped ? "T" : "U") + "|" + (land.basic ? "B" : "N") + "|g" + gated.join("");
+    // gated color is part of the signature (keeps them in their own group). Utility
+    // lands each get a unique signature — they're distinct cards, not interchangeable.
+    const sig = isUtility ? "UTIL|" + land.name
+      : colors.join("") + "|" + (land.tapped ? "T" : "U") + "|" + (land.basic ? "B" : "N") + "|g" + gated.join("");
     let g = groups.get(sig);
     if (!g) {
       g = {
         name: land.name, colors, tapped: !!land.tapped, basic: !!land.basic, land, members: [],
         gated, typeGate: land.typeGate || [], needsBasic: !!land.needsBasic, types: basicTypesOf(land),
         reliable: colors.filter((c) => !gated.includes(c)), // colors available without the gate
+        utility: isUtility, pop: _popularity[land.name]?.score || 0,
       };
       groups.set(sig, g);
     }
@@ -139,6 +160,15 @@ export function candidatePool(requirements, lands) {
 // when both cover the needed colors.
 function landCost(objective, cand, neededCount, off) {
   const offPart = OFF_PENALTY * off;
+  // A utility land makes no colored source, so it earns a slot via its metagame value
+  // (popularity), not the colour objective. The reward makes it beat a redundant
+  // basic/dual in an excess slot; it still pays the per-land cost under "fewest total
+  // lands" and the tapland cost under "fewest tapped". The global MAX_UTILITY cap and
+  // the hard colour minimums keep it to genuine excess slots.
+  if (cand.utility) {
+    const base = (objective === "lands" ? 1 : 0) + (objective === "taplands" && cand.tapped ? 1 : 0);
+    return base - UTIL_REWARD * (cand.pop || 0);
+  }
   if (objective === "taplands") return (cand.tapped ? 1 : 0) + offPart; // fewest tapped
   if (objective === "lands") return 1 + offPart;                        // fewest total lands
   return -(cand.tapped ? 0 : neededCount) + offPart;                    // default: most untapped sources
@@ -151,7 +181,7 @@ function landCost(objective, cand, neededCount, off) {
 // lands (or going infeasible) to force-cover a demanding color, the solver keeps to
 // the land target and, when something must give, gives on the color the deck leans
 // on least — `demandWeights` (per-color total colored pips) ranks that.
-export function buildLandModel({ requirements, lands, landTarget, objective = "untapped", taplandCap = 9, demandWeights = {}, shortfallWeight = 1000, overfixWeight = OVERFIX_WEIGHT }) {
+export function buildLandModel({ requirements, lands, landTarget, objective = "untapped", taplandCap = 9, demandWeights = {}, shortfallWeight = 1000, overfixWeight = OVERFIX_WEIGHT, maxUtility = MAX_UTILITY }) {
   const needed = new Set(COLORS.filter((c) => (requirements[c] || 0) > 0));
   const pool = candidatePool(requirements, lands);
 
@@ -176,6 +206,8 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
   if (landTarget) constraints.total = pinTotal ? { equal: landTarget } : { max: landTarget };
   // Tapland cap — except when we're already minimizing taplands.
   if (objective !== "taplands") constraints.taps = { max: taplandCap };
+  // Global cap on utility (colorless) lands — keeps them a flex-slot accent, not the base.
+  constraints.util = { max: maxUtility };
 
   pool.forEach((cand, i) => {
     // Reward a Verge as the full dual it becomes once its basic type is online, so
@@ -191,6 +223,7 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
     };
     for (const c of cand.reliable) if (constraints["col_" + c]) v["col_" + c] = 1;
     if (overfixWeight > 0) for (const c of cand.reliable) if (constraints["ovf_" + c]) v["ovf_" + c] = 1;
+    if (cand.utility) v.util = 1; // counts toward the global utility cap
     const capKey = "cap_" + i; // per-variable copy bound
     v[capKey] = 1;
     // A signature's real capacity is 4 per distinct non-basic card; basics are
