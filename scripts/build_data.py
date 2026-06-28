@@ -198,6 +198,15 @@ def slim_land(card):
     # 1–2, when you don't yet control two other lands.
     if "two or more other lands" in low:
         out["slow"] = True
+    # "Roads" cycle: "enters tapped unless you control a Mount or Vehicle" — a board
+    # condition most decks never meet, so default to tapped. `untapWhen` lets the app
+    # untap it for decks that actually run enough Mounts/Vehicles, the same deck-aware
+    # way conditional-color lands turn on. (Basic-land-type check lands and the life /
+    # land-count / turn conditions are handled by _enters_tapped and aren't touched —
+    # those decks DO run the enabling basics, so they stay untapped.)
+    if "enters tapped unless you control a mount or vehicle" in low:
+        out["tapped"] = True
+        out["untapWhen"] = "mount or vehicle"
     return out
 
 

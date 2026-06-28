@@ -418,3 +418,25 @@ def test_slow_land_is_flagged_untapped_but_slow():
     })
     assert out["tapped"] is False
     assert out.get("slow") is True
+
+
+def test_roads_land_defaults_tapped_with_untap_condition():
+    """The 'Roads' cycle ('enters tapped unless you control a Mount or Vehicle') banks
+    on a board state most decks never reach, so it defaults to tapped with an
+    `untapWhen` flag the app uses to untap it only for Mount/Vehicle decks. The
+    3-color check-land cycle (off-color basic-type checks) is NOT touched — those decks
+    run the enabling basics, so they stay untapped."""
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    import build_data
+    road = build_data.slim_land({
+        "name": "Rocky Roads", "type_line": "Land", "produced_mana": ["R"],
+        "oracle_text": "This land enters tapped unless you control a Mount or Vehicle.\n{T}: Add {R}.",
+    })
+    assert road["tapped"] is True and road.get("untapWhen") == "mount or vehicle" and road["colors"] == ["R"]
+
+    check = build_data.slim_land({
+        "name": "Cori Mountain Monastery", "type_line": "Land", "produced_mana": ["R"],
+        "oracle_text": "This land enters tapped unless you control an Island or a Plains.\n{T}: Add {R}.",
+    })
+    assert check["tapped"] is False and "untapWhen" not in check
