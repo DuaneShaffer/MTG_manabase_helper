@@ -121,10 +121,13 @@ export function candidatePool(requirements, lands) {
   const groups = new Map();
   for (const land of [...lands].sort((a, b) => a.name.localeCompare(b.name))) {
     const colors = COLORS.filter((c) => (land.colors || []).includes(c));
-    // A proven utility land: colorless, non-basic, and run often enough in winning
-    // decks to be worth a slot. Kept (each as its own group) even though it makes no
-    // needed colour; everything else colourless / off-colour is still dropped.
-    const isUtility = colors.length === 0 && !land.basic && (_popularity[land.name]?.score || 0) >= UTIL_POP_MIN;
+    // A genuine utility land: colorless, non-basic, run often enough in winning decks
+    // to be worth a slot (popularity). Excludes CONDITIONAL lands (land.condition,
+    // e.g. Cavern of Souls "creature") — those are colorless only because the deck
+    // doesn't meet their condition; the conditional system (applyConditions) turns
+    // their colors on when it does, so they must not be mistaken for free utility
+    // here. Everything else colourless / off-colour is still dropped.
+    const isUtility = colors.length === 0 && !land.basic && !land.condition && (_popularity[land.name]?.score || 0) >= UTIL_POP_MIN;
     if (!isUtility && !colors.some((c) => needed.has(c))) continue; // can't help a colour min and not worthwhile utility
     const gated = COLORS.filter((c) => (land.gatedColors || []).includes(c)); // Verge: gated on a basic type
     // Verges are NOT interchangeable with true duals of the same colors, so the
@@ -176,7 +179,7 @@ function landCost(objective, cand, neededCount, off) {
 }
 
 // Build a jsLPSolver model. Pure + exported for testing.
-//   { requirements, lands, landTarget, objective, taplandCap, demandWeights, shortfallWeight, overfixWeight }
+//   { requirements, lands, landTarget, objective, taplandCap, demandWeights, shortfallWeight, overfixWeight, maxUtility }
 // Color requirements are SOFT: each needed color gets a shortfall variable that can
 // fill its minimum at a steep, demand-weighted cost. So instead of running extra
 // lands (or going infeasible) to force-cover a demanding color, the solver keeps to

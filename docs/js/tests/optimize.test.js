@@ -7,7 +7,7 @@
 
 import fs from "fs";
 import assert from "assert";
-import { buildLandModel, candidatePool, summarize, optimizeManabase, battleTested, OBJECTIVES } from "../optimize.js";
+import { buildLandModel, candidatePool, summarize, optimizeManabase, battleTested, setLandPopularity, OBJECTIVES } from "../optimize.js";
 
 // --- load the vendored solver into globalThis.solver -----------------------
 const bundle = fs
@@ -155,6 +155,22 @@ async function run() {
   // No spells / no simulate -> null, so callers fall back to the ILP options.
   const none = await battleTested({ requirements: REQ, lands: LANDS, landTarget: 22, spells: [], deckSize: 60, simulate: linearSim(0.6, 0.03, 0.95) });
   ok("battle-tested: returns null when there's nothing to simulate", none === null);
+
+  // --- Utility-land admission vs. conditional lands -------------------------
+  // A genuine colorless utility land (Great Hall) is admitted on metagame popularity.
+  // A CONDITIONAL colorless land (Cavern, "creature") is NOT — it's colorless only
+  // because its condition is unmet; the conditional system (applyConditions) turns its
+  // colors on when the deck qualifies, so it must not be mistaken for free utility.
+  setLandPopularity({ "Cavern of Souls": { score: 0.5 }, "Great Hall": { score: 0.5 } });
+  const cavern = { name: "Cavern of Souls", colors: [], condition: "creature", condColors: ["U"], type: "Land", tapped: false, basic: false };
+  const greatHall = { name: "Great Hall", colors: [], type: "Land", tapped: false, basic: false };
+  const islandSrc = { name: "Island", colors: ["U"], type: "Basic Land — Island", tapped: false, basic: true };
+  const utilPool = candidatePool({ U: 4 }, [cavern, greatHall, islandSrc]);
+  ok("conditional colorless land (Cavern) is not treated as free utility",
+    !utilPool.some((c) => c.name === "Cavern of Souls"));
+  ok("genuine colorless utility land is admitted when popular",
+    utilPool.some((c) => c.name === "Great Hall" && c.utility));
+  setLandPopularity({}); // reset so other assertions / test files aren't affected
 
   console.log(`\n${passed} optimizer tests passed`);
 }
