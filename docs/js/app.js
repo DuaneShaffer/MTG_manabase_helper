@@ -811,15 +811,17 @@ async function computeRecOptions() {
       }).then((rec) => ({ objective, rec }), () => null)),
   );
   const options = [];
+  const byObjective = [];   // every feasible objective (pre-dedup) — lets callers see what collapsed
   const seen = new Set();
   for (const r of results) {
     if (!r || !r.rec.feasible) continue;
+    byObjective.push({ objective: r.objective, label: OBJECTIVES[r.objective].label, rec: r.rec });
     const sig = _sig(r.rec);
     if (seen.has(sig)) continue;
     seen.add(sig);
     options.push({ label: OBJECTIVES[r.objective].label, rec: r.rec });
   }
-  return options;
+  return { options, byObjective };
 }
 
 // Battle-tested scores every candidate build on the SAME per-trial draws (common
@@ -855,7 +857,7 @@ let _suggestRun = 0;
 async function computeSuggested() {
   const run = ++_suggestRun;
   try {
-    const options = await computeRecOptions();
+    const { options } = await computeRecOptions();
     if (run !== _suggestRun) return;  // superseded by a newer analyze
     const set = new Set();
     for (const opt of options) for (const name of Object.keys(opt.rec.counts)) set.add(name);
@@ -884,7 +886,7 @@ async function computeAllRecs() {
   try {
     // The ILP options and the sim-in-the-loop "Battle-tested" pick run in parallel;
     // battle-tested is best-effort (null if there are no spells / the sim can't run).
-    const [baseOptions, battle] = await Promise.all([
+    const [{ options: baseOptions, byObjective }, battle] = await Promise.all([
       computeRecOptions(),
       computeBattleTested().catch(() => null),
     ]);
@@ -892,10 +894,12 @@ async function computeAllRecs() {
 
     // Battle-tested leads — it's the sim-validated pick and the new default. Drop any
     // ILP option that lands on the exact same (count, tapped) tradeoff so the user
-    // doesn't see a twin without its own distinct story.
+    // doesn't see a twin without its own distinct story — but record which goals it
+    // coincides with so the option can say so (e.g. "also the most-untapped build").
     let options = baseOptions;
     if (battle) {
       const bsig = _sig(battle.rec);
+      battle.coincides = byObjective.filter((o) => _sig(o.rec) === bsig).map((o) => o.objective);
       options = [battle, ...baseOptions.filter((o) => _sig(o.rec) !== bsig)];
     }
 
@@ -976,6 +980,17 @@ function renderAdvice(options) {
   box.hidden = false;
 }
 
+// When battle-tested's build is identical to one or more ILP goals (common — they
+// often converge on the same lands), say so instead of silently swallowing them.
+const COINCIDE_PHRASE = { untapped: "most untapped", taplands: "fewest tapped", lands: "leanest" };
+function coincideNote(opt) {
+  const ks = (opt.coincides || []).filter((k) => COINCIDE_PHRASE[k]);
+  if (!ks.length) return "";
+  const p = ks.map((k) => COINCIDE_PHRASE[k]);
+  const joined = p.length === 1 ? p[0] : p.slice(0, -1).join(", ") + " and " + p[p.length - 1];
+  return ` · also the ${joined} build for these colors`;
+}
+
 function selectRecOption(i) {
   const opt = state.recOptions[i];
   if (!opt) return;
@@ -983,9 +998,10 @@ function selectRecOption(i) {
     b.classList.toggle("on", Number(b.dataset.i) === i);
   }
   // Battle-tested is selected by simulation, not by a single ILP goal, so it gets
-  // its own note (and reports the simulated castability it was chosen on).
+  // its own note (the simulated castability it was chosen on, plus any ILP goals it
+  // coincides with — so a collapsed single option isn't a mystery).
   const note = opt.sim
-    ? `simulated best — leanest base that still casts your curve · ${pct(opt.sim.overall)} on curve`
+    ? `simulated best · ${pct(opt.sim.overall)} on curve${coincideNote(opt)}`
     : (state.recOptions.length > 1 ? "optimal for this goal — " + opt.label.toLowerCase() : opt.label.toLowerCase());
   renderRecList(opt.rec, `${opt.rec.total} lands · ${opt.rec.taplands} tapped · ${note}${_shortNote(opt.rec)}`);
   $("#recApply").disabled = false;
