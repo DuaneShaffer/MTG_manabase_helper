@@ -56,6 +56,18 @@ export const OBJECTIVES = {
 // rainbow land that both add the needed colors).
 const OFF_PENALTY = 0.5;
 
+// Per-color over-supply penalty. The color minimums are floors, so without this the
+// solver treats sources beyond a color's requirement as free and piles on redundant
+// fixing — especially rainbow lands that satisfy several minimums at once, producing
+// phantom off-colors and crowding out basics. This charges for each colored source
+// past the requirement (a color's reliability threshold), so once a color is covered
+// the land budget shifts to focused duals and basics. Must exceed the per-color
+// untapped reward (1) so an excess source is net-positive cost; far below
+// shortfallWeight so it never trades away meeting a minimum. Empirically saturates
+// by ~2 (validated against the pro decks: cuts over-supply with no loss of simulated
+// castability), so the exact value isn't sensitive.
+const OVERFIX_WEIGHT = 2;
+
 // Lazy-load the vendored solver. In the browser it injects a classic <script>
 // that sets window.solver; in Node a test can pre-set globalThis.solver and this
 // returns it without touching the DOM.
@@ -133,13 +145,13 @@ function landCost(objective, cand, neededCount, off) {
 }
 
 // Build a jsLPSolver model. Pure + exported for testing.
-//   { requirements, lands, landTarget, objective, taplandCap, demandWeights, shortfallWeight }
+//   { requirements, lands, landTarget, objective, taplandCap, demandWeights, shortfallWeight, overfixWeight }
 // Color requirements are SOFT: each needed color gets a shortfall variable that can
 // fill its minimum at a steep, demand-weighted cost. So instead of running extra
 // lands (or going infeasible) to force-cover a demanding color, the solver keeps to
 // the land target and, when something must give, gives on the color the deck leans
 // on least — `demandWeights` (per-color total colored pips) ranks that.
-export function buildLandModel({ requirements, lands, landTarget, objective = "untapped", taplandCap = 9, demandWeights = {}, shortfallWeight = 1000 }) {
+export function buildLandModel({ requirements, lands, landTarget, objective = "untapped", taplandCap = 9, demandWeights = {}, shortfallWeight = 1000, overfixWeight = OVERFIX_WEIGHT }) {
   const needed = new Set(COLORS.filter((c) => (requirements[c] || 0) > 0));
   const pool = candidatePool(requirements, lands);
 
@@ -149,7 +161,13 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
 
   // Per-color source minimums (made soft by the shortfall variables below).
   for (const c of COLORS) {
-    if ((requirements[c] || 0) > 0) constraints["col_" + c] = { min: requirements[c] };
+    if ((requirements[c] || 0) > 0) {
+      constraints["col_" + c] = { min: requirements[c] };
+      // Over-supply ceiling: sources beyond the requirement spill into a penalized
+      // `over_c` slack (added below), so colored sources past a color's reliability
+      // threshold cost something instead of being free. Off by default.
+      if (overfixWeight > 0) constraints["ovf_" + c] = { max: requirements[c] };
+    }
   }
   // Total lands: the recommended count is a hard cap. The untapped / taplands
   // objectives fill to exactly the target; "fewest total lands" may come in under
@@ -172,6 +190,7 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
       cost: landCost(objective, cand, neededCount, off),
     };
     for (const c of cand.reliable) if (constraints["col_" + c]) v["col_" + c] = 1;
+    if (overfixWeight > 0) for (const c of cand.reliable) if (constraints["ovf_" + c]) v["ovf_" + c] = 1;
     const capKey = "cap_" + i; // per-variable copy bound
     v[capKey] = 1;
     // A signature's real capacity is 4 per distinct non-basic card; basics are
@@ -192,6 +211,18 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
     if (!constraints["col_" + c]) continue;
     variables["short_" + c] = { ["col_" + c]: 1, cost: shortfallWeight * Math.max(1, demandWeights[c] || 1) };
     ints["short_" + c] = 1;
+  }
+
+  // Over-supply penalty: over_c absorbs sources above requirement[c]; minimizing it
+  // (cost overfixWeight) makes redundant colored fixing cost more than a basic and
+  // far more than a utility land, so once a color is covered the land budget shifts
+  // to basics / utility instead of piling on duals & rainbow fixers. Weight must be
+  // > the per-color untapped reward (1) so an excess source is net-positive cost, and
+  // << shortfallWeight so it never trades away meeting a minimum.
+  if (overfixWeight > 0) for (const c of COLORS) {
+    if (!constraints["ovf_" + c]) continue;
+    variables["over_" + c] = { ["ovf_" + c]: -1, cost: overfixWeight };
+    ints["over_" + c] = 1;
   }
 
   // Gated-color credit: a gated color only counts up to how many lands enable it.
@@ -218,6 +249,7 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
       variables[cand.name][leCopies] = (variables[cand.name][leCopies] || 0) + 1;
       for (const s of supporters) variables[s.name][leSupport] = (variables[s.name][leSupport] || 0) + 1;
       variables[aux] = { ["col_" + c]: 1, [leCopies]: -1, [leSupport]: -1 };
+      if (overfixWeight > 0 && constraints["ovf_" + c]) variables[aux]["ovf_" + c] = 1; // gated credit counts toward over-supply too
       ints[aux] = 1;
     }
   });
