@@ -3,7 +3,7 @@ import { costConstraints, manaValue } from "./mana.js";
 import { requirementsForCards } from "./requirements.js";
 import { castableProbability, multivariateCastable, grade } from "./hypergeometric.js";
 import { recommend as recommendManabase, recommendLandCount } from "./recommend.js";
-import { optimizeManabase, OBJECTIVES, setLandPopularity } from "./optimize.js";
+import { optimizeManabase, battleTested, OBJECTIVES, setLandPopularity } from "./optimize.js";
 import { manabaseAdvice } from "./advice.js";
 import { simulateDeck } from "./montecarlo.js";
 import { parseDeckText, deckEntries, cardNames } from "./decklist.js";
@@ -388,6 +388,13 @@ function applyConditions(cards, qtyByName) {
       land.colors = eff.slice();
       refreshTileDots(land);
     }
+  }
+  // Deck-aware tapped: a "Roads" land (untapWhen "mount or vehicle") enters untapped
+  // only when the deck runs enough of that permanent; otherwise it's a tapland. The
+  // recommender, sim, and tile all read land.tapped, so this flows everywhere.
+  for (const land of state.lands) {
+    if (!land.untapWhen) continue;
+    land.tapped = state.conditionsActive.has(land.untapWhen) ? false : land.baseTapped;
   }
 }
 
@@ -815,6 +822,37 @@ async function computeRecOptions() {
   return options;
 }
 
+// Seeded PRNG (mulberry32). Battle-tested scores every candidate build on the SAME
+// shuffles (common random numbers), so the comparison between builds is low-variance
+// and the pick is deterministic — even though each absolute number is still noisy.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const BATTLE_SEED = 0x9e3779b9;
+
+// The "Battle-tested" option: ask the ILP for candidate bases across a range of land
+// counts, then let the Monte-Carlo simulator pick the leanest one that still casts
+// the whole curve about as reliably as any. The simulator (used elsewhere only as a
+// validator) becomes the recommender's objective. Returns { label, rec, sim } or
+// null (no spells / solver down) — callers fall back to the ILP options.
+async function computeBattleTested() {
+  const drawCount = smoothCount() + digCount();
+  // Re-seed per call so each candidate faces the identical draw sequence.
+  const simulate = (buildLands, deckSize, trials) =>
+    simulateDeck(state.spells, buildLands, deckSize, { trials, drawCount, rng: mulberry32(BATTLE_SEED) });
+  const pick = await battleTested({
+    requirements: state.requirements, lands: state.lands, landTarget: state.landTarget,
+    demandWeights: state.demand, spells: state.spells, deckSize: state.deckSize, simulate,
+  });
+  return pick ? { label: "Battle-tested", rec: pick.rec, sim: pick.sim } : null;
+}
+
 // Build the "Suggested" filter set: every land any optimal base reaches for, plus
 // on-color basics (always a tuning lever). These are the same picks Build manabase
 // offers — narrowing the full pool to what the recommender would actually run.
@@ -849,8 +887,22 @@ async function computeAllRecs() {
   $("#recSummary").textContent = "Working out your options…";
 
   try {
-    const options = await computeRecOptions();
+    // The ILP options and the sim-in-the-loop "Battle-tested" pick run in parallel;
+    // battle-tested is best-effort (null if there are no spells / the sim can't run).
+    const [baseOptions, battle] = await Promise.all([
+      computeRecOptions(),
+      computeBattleTested().catch(() => null),
+    ]);
     if (run !== _recRun) return;  // superseded by a newer open/recompute
+
+    // Battle-tested leads — it's the sim-validated pick and the new default. Drop any
+    // ILP option that lands on the exact same (count, tapped) tradeoff so the user
+    // doesn't see a twin without its own distinct story.
+    let options = baseOptions;
+    if (battle) {
+      const bsig = _sig(battle.rec);
+      options = [battle, ...baseOptions.filter((o) => _sig(o.rec) !== bsig)];
+    }
 
     if (options.length) {
       state.recOptions = options;
@@ -887,9 +939,16 @@ function renderRecOptions(options) {
   options.forEach((opt, i) => {
     const btn = el("button", "rec-option");
     btn.dataset.i = i;
+    // Battle-tested carries its simulated on-curve castability and a "simulated"
+    // badge; the ILP options show the land-count / tapped tradeoff they optimize for.
+    const stat = opt.sim
+      ? `${opt.rec.total} lands · ${opt.rec.taplands} tapped · ${pct(opt.sim.overall)} on curve`
+      : `${opt.rec.total} lands · ${opt.rec.taplands} tapped`;
+    if (opt.sim) btn.classList.add("battle");
+    const badge = opt.sim ? `<span class="ro-badge">simulated</span>` : "";
     btn.innerHTML =
-      `<span class="ro-name">${opt.label}</span>` +
-      `<span class="ro-stat">${opt.rec.total} lands · ${opt.rec.taplands} tapped</span>`;
+      `<span class="ro-main"><span class="ro-name">${opt.label}</span>${badge}</span>` +
+      `<span class="ro-stat">${stat}</span>`;
     wrap.appendChild(btn);
   });
 }
@@ -928,7 +987,11 @@ function selectRecOption(i) {
   for (const b of document.querySelectorAll("#recOptions .rec-option")) {
     b.classList.toggle("on", Number(b.dataset.i) === i);
   }
-  const note = state.recOptions.length > 1 ? "optimal for this goal — " + opt.label.toLowerCase() : opt.label.toLowerCase();
+  // Battle-tested is selected by simulation, not by a single ILP goal, so it gets
+  // its own note (and reports the simulated castability it was chosen on).
+  const note = opt.sim
+    ? `simulated best — leanest base that still casts your curve · ${pct(opt.sim.overall)} on curve`
+    : (state.recOptions.length > 1 ? "optimal for this goal — " + opt.label.toLowerCase() : opt.label.toLowerCase());
   renderRecList(opt.rec, `${opt.rec.total} lands · ${opt.rec.taplands} tapped · ${note}${_shortNote(opt.rec)}`);
   $("#recApply").disabled = false;
 }
@@ -989,7 +1052,9 @@ async function boot() {
     state.lands = await loadLands();
     for (const land of state.lands) {
       land.baseColors = land.colors.slice();          // colors before any condition
+      land.baseTapped = !!land.tapped;                 // tapped before any untap condition
       if (land.condition) state.conditionsPresent.add(land.condition);
+      if (land.untapWhen) state.conditionsPresent.add(land.untapWhen);
     }
     buildGrid();
     const meta = await loadMeta();

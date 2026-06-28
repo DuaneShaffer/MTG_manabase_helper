@@ -7,7 +7,7 @@
 
 import fs from "fs";
 import assert from "assert";
-import { buildLandModel, candidatePool, summarize, optimizeManabase, OBJECTIVES } from "../optimize.js";
+import { buildLandModel, candidatePool, summarize, optimizeManabase, battleTested, OBJECTIVES } from "../optimize.js";
 
 // --- load the vendored solver into globalThis.solver -----------------------
 const bundle = fs
@@ -109,6 +109,41 @@ async function run() {
     withBasic.feasible && withBasic.sources.W >= 2 && withBasic.sources.U >= 2
     && Object.keys(withBasic.shortfall).length === 0
     && (withBasic.counts["Gleaming Bastion"] || 0) > 0 && (withBasic.counts["Plains"] || 0) > 0);
+
+  // --- Battle-tested: sim-in-the-loop, flood-anchored count selection -------
+  // The simulator never penalizes flood, so its castability only rises with land
+  // count. Battle-tested supplies the missing counterweight: a flood penalty above
+  // the regression count, so a deck must EARN extra lands with real castability. We
+  // inject a stub `simulate` keyed on total land count to drive both regimes.
+  const battleSpells = [{ name: "x", pips: { U: 1, B: 1 }, mv: 2 }];
+  const totalOf = (buildLands) => buildLands.reduce((n, l) => n + l.count, 0);
+  const linearSim = (base, slope, cap) => (buildLands) => ({
+    overall: Math.min(cap, base + slope * totalOf(buildLands)), bySpell: {}, trials: 1,
+  });
+
+  // Saturating curve (a lean aggro deck): castability is flat near the regression
+  // count, so extra lands only incur the flood penalty — the pick stays at/under the
+  // regression target rather than piling on lands.
+  const aggro = await battleTested({
+    requirements: REQ, lands: LANDS, landTarget: 22, spells: battleSpells, deckSize: 60,
+    simulate: linearSim(0.6, 0.03, 0.95), floodPerLand: 0.02,
+  });
+  ok("battle-tested: a saturating curve doesn't flood past the regression count", aggro && aggro.rec.total <= 22);
+  ok("battle-tested: returns the simulated score it chose on", aggro.sim && aggro.sim.overall >= 0.9);
+  ok("battle-tested: still covers both colors", aggro.rec.sources.U >= 10 && aggro.rec.sources.B >= 10);
+
+  // Strongly climbing curve (slope above the flood penalty — a bomb-topped deck that
+  // keeps needing more lands): each extra land earns more castability than it costs
+  // in flood, so the pick rises above the regression count (capped by the band).
+  const control = await battleTested({
+    requirements: REQ, lands: LANDS, landTarget: 16, spells: battleSpells, deckSize: 60,
+    simulate: linearSim(0.4, 0.03, 1), floodPerLand: 0.02,
+  });
+  ok("battle-tested: a curve that keeps earning lands runs more than the target", control && control.rec.total > 16);
+
+  // No spells / no simulate -> null, so callers fall back to the ILP options.
+  const none = await battleTested({ requirements: REQ, lands: LANDS, landTarget: 22, spells: [], deckSize: 60, simulate: linearSim(0.6, 0.03, 0.95) });
+  ok("battle-tested: returns null when there's nothing to simulate", none === null);
 
   console.log(`\n${passed} optimizer tests passed`);
 }
