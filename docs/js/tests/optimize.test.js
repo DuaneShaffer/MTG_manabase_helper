@@ -110,6 +110,17 @@ async function run() {
     && Object.keys(withBasic.shortfall).length === 0
     && (withBasic.counts["Gleaming Bastion"] || 0) > 0 && (withBasic.counts["Plains"] || 0) > 0);
 
+  // The untapped objective must NOT pad excess slots with a check land when there's
+  // no basic to turn it on (it taps for {C} only). With other untapped fixing
+  // covering the colors, a chosen check land must come with basics.
+  const dual = { name: "UW Dual", colors: ["U", "W"], type: "Land", tapped: false, basic: false };
+  const pad = await optimizeManabase({ requirements: { W: 4, U: 4, B: 0, R: 0, G: 0 },
+    lands: [dual, bastion, plains, island], landTarget: 17, objective: "untapped" });
+  const padBastions = pad.counts["Gleaming Bastion"] || 0;
+  const padBasics = (pad.counts["Plains"] || 0) + (pad.counts["Island"] || 0);
+  ok("untapped objective won't pad with a check land that has no basics to enable it",
+    padBastions === 0 || padBasics > 0);
+
   // --- Battle-tested: sim-in-the-loop, flood-anchored count selection -------
   // The simulator never penalizes flood, so its castability only rises with land
   // count. Battle-tested supplies the missing counterweight: a flood penalty above

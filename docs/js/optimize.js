@@ -210,11 +210,14 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
   constraints.util = { max: maxUtility };
 
   pool.forEach((cand, i) => {
-    // Reward a Verge as the full dual it becomes once its basic type is online, so
-    // the solver prefers it like pros do. The color minimum still routes the gated
-    // color through the support linkage below (col_ credit uses only the reliable
-    // colors), so it can't be leaned on without the types.
-    const neededCount = cand.colors.reduce((n, c) => n + (needed.has(c) ? 1 : 0), 0);
+    // Reward a land only for the needed colors it RELIABLY makes (its un-gated
+    // colors). A gated color — a Verge's second color, or a check land's colors —
+    // earns the untapped reward through its credit variable below instead, so it
+    // only counts as an untapped source when the build actually supplies the enabler
+    // (matching basic types / a real basic). Without that, the objective would pad
+    // the build with check lands that make no colored mana (they tap for {C} until a
+    // basic is down) — e.g. recommending Gleaming Bastion with zero basics.
+    const neededCount = cand.reliable.reduce((n, c) => n + (needed.has(c) ? 1 : 0), 0);
     const off = cand.colors.filter((c) => !needed.has(c)).length; // colors the deck doesn't need
     const v = {
       total: 1,                          // constraint: total land count
@@ -282,6 +285,11 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
       variables[cand.name][leCopies] = (variables[cand.name][leCopies] || 0) + 1;
       for (const s of supporters) variables[s.name][leSupport] = (variables[s.name][leSupport] || 0) + 1;
       variables[aux] = { ["col_" + c]: 1, [leCopies]: -1, [leSupport]: -1 };
+      // An enabled gated color from an untapped land IS an untapped source, so it
+      // earns the untapped objective's per-source reward here (mirrors landCost's
+      // −neededCount) — but only up to what `supporters` actually enable, so the
+      // solver gains nothing from a gated land its build can't turn on.
+      if (objective === "untapped" && !cand.tapped) variables[aux].cost = -1;
       if (overfixWeight > 0 && constraints["ovf_" + c]) variables[aux]["ovf_" + c] = 1; // gated credit counts toward over-supply too
       ints[aux] = 1;
     }
