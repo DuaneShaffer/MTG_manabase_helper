@@ -209,9 +209,10 @@ section.deck-input, section.dashboard, section.tools {
 .strip-legend .sl-arrow { color: var(--ink-dim); }
 .strip-legend .axis-ico { flex: none; }
 
-/* sideboard guidance — lives at the foot of the left panel (never reflows the grid).
-   Guide hue (informational, not gold). */
-.pd-advice { font-size: 12px; color: var(--ink); line-height: 1.5; margin: 16px 0 0;
+/* sideboard guidance — sits at the bottom-right of the deck section, below the grid
+   (so it never reflows the cards). Guide hue (informational, not gold). */
+.pd-advice { font-size: 12px; color: var(--ink); line-height: 1.5; margin: 16px 0 0 auto;
+  max-width: 480px;
   background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--guide);
   border-radius: var(--radius-sm); padding: 10px 12px; }
 .pd-advice[hidden] { display: none; }
@@ -449,16 +450,19 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 
 /* ---------- color dashboard (signature) ---------- */
 /* Horizontal strip of per-color meters (lives under the deck). Each color is a
-   compact cell: pip + count on top, the coverage bar below; wraps on narrow viewports. */
-.colors { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 18px; }
+   compact cell: the pip overlaps the start of the coverage bar, count below it;
+   wraps on narrow viewports. */
+.colors { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 16px 18px; }
 .color-row {
-  display: grid; grid-template-columns: 34px 1fr;
-  grid-template-areas: "pip count" "bar bar";
-  align-items: center; gap: 7px 10px;
+  position: relative;
+  display: grid; grid-template-rows: 34px auto;
+  grid-template-areas: "bar" "count";
+  row-gap: 7px;
 }
-.color-row .pip { grid-area: pip; }
-.color-row .bar-wrap { grid-area: bar; }
-.color-row .count { grid-area: count; }
+/* pip sits over the bar's left start (its centre at the bar's origin) */
+.color-row .pip { grid-area: bar; position: absolute; left: 0; top: 0; z-index: 2; }
+.color-row .bar-wrap { grid-area: bar; align-self: center; padding-left: 17px; }
+.color-row .count { grid-area: count; text-align: left; }
 .pip {
   width: 34px; height: 34px; border-radius: 50%;
   display: grid; place-items: center; font-weight: 700; font-size: 15px;
