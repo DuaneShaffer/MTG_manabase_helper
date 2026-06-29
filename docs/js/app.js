@@ -20,7 +20,6 @@ const state = {
   deckSize: 60,
   landTarget: null,
   threshold: null,     // null = Karsten sliding; else flat float
-  onPlay: true,        // sim assumption: on the play (default) vs on the draw (+1 card seen / turn)
   suggest: null,       // fixer glow: null = auto (glow while a color is short); true/false = user override
   raresOnly: false,
   search: "",
@@ -664,14 +663,17 @@ function renderSpellStrip() {
     badge.innerHTML =
       `<span class="axis-ico colors" title="Colors: are the right colors available by the turn you'd cast this, assuming you hit your land drops?" aria-label="Color reliability"></span>` +
       `<span class="bp"></span>`;
-    // Simulated reading — the clock icon flags it as the LANDS-ON-TIME %.
+    // Simulated reading — the clock icon flags it as the LANDS-ON-TIME %. Two
+    // figures, always both shown: on the play → on the draw (draw is always ≥ play).
     const simPill = el("div", "sim-pill");
     simPill.hidden = true;
     simPill.innerHTML =
-      `<svg class="axis-ico timing" viewBox="0 0 16 16" role="img" aria-label="Real games: lands on time"><title>Real games: do you draw enough lands, on time? A simulated on-curve rate including mana screw &amp; flood.</title>` +
+      `<svg class="axis-ico timing" viewBox="0 0 16 16" role="img" aria-label="Real games: lands on time, on the play then on the draw"><title>Real games: do you draw enough lands, on time? Simulated on-curve rate (incl. screw &amp; flood) — on the play → on the draw.</title>` +
       `<circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.4"/>` +
       `<path d="M8 8 L8 4.2 M8 8 L10.7 9.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>` +
-      `<span class="sp-p"></span>`;
+      `<span class="sp-p sp-play" title="on the play"></span>` +
+      `<span class="sp-sep" aria-hidden="true">→</span>` +
+      `<span class="sp-p sp-draw" title="on the draw"></span>`;
     cell.append(ph, img, qty, badge, simPill);
     if (spell.smooth) {                          // cheap (<=2 MV) draw/ramp — trims lands + helps sim
       const tag = el("button", "smooth-tag");
@@ -767,28 +769,31 @@ function doSimulate() {
     if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, basic: !!land.basic, needsBasic: !!land.needsBasic, slow: !!land.slow, untapBasic: !!land.untapBasic, count: c });
   }
   // Both cheap smoothers and mid-cost diggers help you find lands in a real game.
-  const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount: smoothCount() + digCount(), onPlay: state.onPlay });
-  // Refresh the simulated pill on each card — the model badge stays as-is, so both
-  // readings are visible together.
+  // Run both seatings so each card shows on-the-play → on-the-draw side by side.
+  const drawCount = smoothCount() + digCount();
+  const resPlay = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount, onPlay: true });
+  const resDraw = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount, onPlay: false });
+  // Refresh both figures on each card's clock pill — the model badge stays as-is.
   for (const spell of state.spells) {
-    const p = res.bySpell[spell.name];
     const cell = state.spellCells.get(spell.name);
     if (!cell) continue;
-    const pill = cell.querySelector(".sim-pill");
-    pill.dataset.g = grade(p).letter;   // tint only
-    pill.querySelector(".sp-p").textContent = pct(p);
-    pill.hidden = false;
+    const pp = resPlay.bySpell[spell.name], pd = resDraw.bySpell[spell.name];
+    const playEl = cell.querySelector(".sp-play"), drawEl = cell.querySelector(".sp-draw");
+    playEl.textContent = pct(pp); playEl.dataset.g = grade(pp).letter;
+    drawEl.textContent = pct(pd); drawEl.dataset.g = grade(pd).letter;
+    cell.querySelector(".sim-pill").hidden = false;
   }
-  // Overall headline = the true (simulated) weakest; the model figure rides along as context.
+  // Overall headline = the true (simulated) weakest on the play (the conservative floor);
+  // the draw figure and the colors model ride along as context.
   $("#hudGrade").hidden = false;
   const og = $("#overallGrade");
   const ogl = og.querySelector(".og-letter");
-  ogl.textContent = pct(res.overall);
-  ogl.dataset.g = grade(res.overall).letter;
+  ogl.textContent = pct(resPlay.overall);
+  ogl.dataset.g = grade(resPlay.overall).letter;
   og.querySelector(".og-text").textContent =
-    `Weakest card in real games (${state.onPlay ? "on the play" : "on the draw"}), incl. screw · ${pct(state.staticWorst != null ? state.staticWorst : res.overall)} on colors alone`;
-  updateMobileGrade(pct(res.overall), grade(res.overall).letter);
-  renderDrawSlack();   // "you can cut N lands on the draw" guidance (no-op unless on the draw)
+    `Weakest card in real games, incl. screw · ${pct(resDraw.overall)} on the draw · ${pct(state.staticWorst != null ? state.staticWorst : resPlay.overall)} on colors alone`;
+  updateMobileGrade(pct(resPlay.overall), grade(resPlay.overall).letter);
+  renderDrawSlack();   // "you can cut N lands on the draw" guidance, shown in the panel
 }
 
 /* ---------- "land slack on the draw" sideboard guidance ---------- */
@@ -844,7 +849,7 @@ function computeDrawSlack() {
 function renderDrawSlack() {
   const box = $("#pdAdvice");
   if (!box) return;
-  if (state.onPlay || !state.spells.length) { box.hidden = true; return; }
+  if (!state.spells.length) { box.hidden = true; return; }
   const { cut, color, total } = computeDrawSlack();
   if (!total) { box.hidden = true; return; }
   if (cut <= 0) {
@@ -1276,18 +1281,6 @@ function wireEvents() {
   $("#confSel").addEventListener("change", (e) => {
     state.threshold = e.target.value ? parseFloat(e.target.value) : null;
     if ($("#deckText").value.trim()) analyzeDeck();
-  });
-  // Play / draw: re-simulate under the new assumption. Only the sim (clock) reading
-  // and its sideboard advice respond — the colors/Karsten badge has no draw notion.
-  $("#playDraw").addEventListener("click", (e) => {
-    const btn = e.target.closest(".seg-btn");
-    if (!btn) return;
-    const onPlay = btn.dataset.pd === "play";
-    if (onPlay === state.onPlay) return;
-    state.onPlay = onPlay;
-    for (const b of document.querySelectorAll("#playDraw .seg-btn")) b.classList.toggle("on", b === btn);
-    if (state.onPlay) $("#pdAdvice").hidden = true;   // hide stale draw advice immediately
-    scheduleSim();
   });
   $("#searchBox").addEventListener("input", (e) => {
     state.search = e.target.value.toLowerCase().trim();

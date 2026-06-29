@@ -198,19 +198,17 @@ section.deck-input, section.dashboard, section.tools {
 .grade-note .gn-tip { margin: 11px 0 0; padding-top: 10px; border-top: 1px solid var(--line); }
 .grade-note .gn-tip em { color: var(--parchment); font-style: normal; font-weight: 600; }
 
-/* always-on key for the two per-card readings (colors pie · lands-on-time clock),
-   with the play/draw toggle right-aligned — it modifies the lands-on-time reading. */
-.strip-legend { display: flex; flex-wrap: wrap; align-items: center;
-  justify-content: space-between; gap: 8px 18px; margin: 0 0 14px; }
-.strip-legend .sl-keys { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+/* always-on key for the two per-card readings (colors pie · lands-on-time clock) */
+.strip-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 14px; }
 .strip-legend .sl-item { display: inline-flex; align-items: center; gap: 7px;
   font-size: 11.5px; color: var(--ink-dim); }
 .strip-legend .sl-t strong { color: var(--parchment); font-weight: 600; }
+.strip-legend .sl-arrow { color: var(--ink-dim); }
 .strip-legend .axis-ico { flex: none; }
-.pd-toggle { flex: none; }
 
-/* sideboard guidance, shown only on the draw — guide hue (informational, not gold) */
-.pd-advice { font-size: 12.5px; color: var(--ink); line-height: 1.5; margin: 0 0 14px;
+/* sideboard guidance — lives at the foot of the left panel (never reflows the grid).
+   Guide hue (informational, not gold). */
+.pd-advice { font-size: 12px; color: var(--ink); line-height: 1.5; margin: 16px 0 0;
   background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--guide);
   border-radius: var(--radius-sm); padding: 10px 12px; }
 .pd-advice[hidden] { display: none; }
@@ -273,13 +271,15 @@ section.deck-input, section.dashboard, section.tools {
   border: 1px solid rgba(255,255,255,.08);
 }
 .sim-pill[hidden] { display: none; }
-.sim-pill .sp-p { font-family: var(--font-display); font-weight: 700; font-size: 13px;
+/* two figures: on the play → on the draw, each tinted by its own band */
+.sim-pill .sp-p { font-family: var(--font-display); font-weight: 700; font-size: 12px;
   font-variant-numeric: tabular-nums; color: var(--parchment); }
-.sim-pill[data-g="A"] .sp-p { color: var(--grade-A); }
-.sim-pill[data-g="B"] .sp-p { color: var(--grade-B); }
-.sim-pill[data-g="C"] .sp-p { color: var(--grade-C); }
-.sim-pill[data-g="D"] .sp-p { color: var(--grade-D); }
-.sim-pill[data-g="F"] .sp-p { color: var(--grade-F); }
+.sim-pill .sp-p[data-g="A"] { color: var(--grade-A); }
+.sim-pill .sp-p[data-g="B"] { color: var(--grade-B); }
+.sim-pill .sp-p[data-g="C"] { color: var(--grade-C); }
+.sim-pill .sp-p[data-g="D"] { color: var(--grade-D); }
+.sim-pill .sp-p[data-g="F"] { color: var(--grade-F); }
+.sim-pill .sp-sep { color: var(--ink-dim); font-size: 10px; margin: 0 1px; }
 
 /* axis icons that label what each pill measures: a mana-pie = colors (model
    badge), a clock = lands-on-time (sim pill). */
