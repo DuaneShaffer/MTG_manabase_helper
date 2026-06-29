@@ -46,8 +46,8 @@ export function manabaseAdvice(options, ctx) {
       return {
         status: "covered-slack",
         headline: "Every color's covered.",
-        detail: [`Your ${landTarget} lands meet every color requirement, with room to spare — as few as ${minCover} would still cover your colors.`],
-        levers: [`The extra ${slack} land${slack === 1 ? "" : "s"} ${slack === 1 ? "is" : "are"} flood insurance for your curve, not fixing — keep ${landTarget} unless you're flooding out.`],
+        detail: [`Your ${landTarget} lands clear every color's source minimum with room to spare — covering your colors alone would take as few as ${minCover} lands.`],
+        levers: [`The other ${slack} land${slack === 1 ? "" : "s"} ${slack === 1 ? "is" : "are"} about hitting your land drops on curve (mana-screw insurance), not color fixing — ${landTarget} is set by your curve, so keep it unless you're flooding out.`],
       };
     }
     return {
