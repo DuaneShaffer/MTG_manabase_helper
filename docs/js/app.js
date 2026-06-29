@@ -750,7 +750,8 @@ async function analyzeDeck() {
 function renderSpellStrip() {
   const strip = $("#deckStrip");
   const grid = $("#spellGrid");
-  grid.innerHTML = "";
+  const advice = $("#pdAdvice");   // lives inside the grid as its last child; rebuild around it
+  grid.querySelectorAll(".spell").forEach((n) => n.remove());
   state.spellCells = new Map();
   if (!state.spells.length) { strip.hidden = true; $("#hudGrade").hidden = true; $("#mobileGrade").hidden = true; return; }
   strip.hidden = false;
@@ -803,7 +804,7 @@ function renderSpellStrip() {
     costTag.addEventListener("click", (e) => { e.stopPropagation(); openCostPop(spell, costTag); });
     cell.appendChild(costTag);
     if (overridden) cell.dataset.costOverride = "1";
-    grid.appendChild(cell);
+    grid.insertBefore(cell, advice);   // cards before the advice, which stays the last cell
     state.spellCells.set(spell.name, cell);
   }
 }
@@ -1048,7 +1049,9 @@ function renderDrawSlack(slack) {
       `<strong>${pct(drawAfter)}</strong> on the draw — still at or above its <strong>${pct(playBar)}</strong> on the play.`;
   const btn = `<button type="button" id="previewCutBtn" class="pa-btn${state.previewCut ? " on" : ""}">` +
     `${state.previewCut ? "Show actual draw %" : "Preview the cut"}</button>`;
-  box.innerHTML = `${body} ${btn}`;
+  // Text in its own block, button pinned to the box bottom (CSS) — so toggling the
+  // text above never shifts the button.
+  box.innerHTML = `<span class="pa-text">${body}</span>${btn}`;
   box.hidden = false;
 }
 

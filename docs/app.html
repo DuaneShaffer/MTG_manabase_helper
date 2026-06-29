@@ -177,12 +177,12 @@
           <p class="gn-tip">Colors high but lands-on-time low? You're screwing or flooding — change
             the land <em>count</em>, not the fixing.</p>
         </div>
-        <div class="spell-grid" id="spellGrid"></div>
-        <!-- Sideboard guidance: how many lands you can shave on the draw and still match
-             your on-the-play reliability, and what it does to your draw %. Sits at the
-             bottom-right of the deck section, below the grid, so it never reflows the
-             cards. Filled live by renderDrawSlack(). -->
-        <p class="pd-advice" id="pdAdvice" hidden></p>
+        <!-- Sideboard guidance lives INSIDE the grid as its last cell, so it fills the
+             trailing space of the last card row (bottom-right) instead of adding a whole
+             empty row. renderSpellStrip keeps it as the final child. -->
+        <div class="spell-grid" id="spellGrid">
+          <p class="pd-advice" id="pdAdvice" hidden></p>
+        </div>
       </section>
 
       <!-- Mana sources: the five WUBRG coverage meters, laid out as a horizontal
