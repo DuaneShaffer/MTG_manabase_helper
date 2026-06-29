@@ -462,7 +462,7 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 /* pip sits over the bar's left start (its centre at the bar's origin) */
 .color-row .pip { grid-area: bar; position: absolute; left: 0; top: 0; z-index: 2; }
 .color-row .bar-wrap { grid-area: bar; align-self: center; padding-left: 17px; }
-.color-row .count { grid-area: count; text-align: left; }
+.color-row .count { grid-area: count; text-align: right; }
 .pip {
   width: 34px; height: 34px; border-radius: 50%;
   display: grid; place-items: center; font-weight: 700; font-size: 15px;
