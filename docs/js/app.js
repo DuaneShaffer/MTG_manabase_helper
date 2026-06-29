@@ -1587,7 +1587,14 @@ function recomputeDrawOdds() {
 }
 
 /* ---------- boot ---------- */
+// Keep the browser chrome (address bar / PWA) color matched to the active theme.
+function syncThemeColor() {
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.content = document.documentElement.dataset.theme === "light" ? "#efe6d3" : "#14110e";
+}
+
 async function boot() {
+  syncThemeColor();      // match the chrome color to the theme the <head> script picked
   buildDashboard();
   refreshDashboard();
   wireEvents();
@@ -1713,6 +1720,14 @@ function wireEvents() {
   $("#confSel").addEventListener("change", (e) => {
     state.threshold = e.target.value ? parseFloat(e.target.value) : null;
     if ($("#deckText").value.trim()) analyzeDeck();
+  });
+  // Light / dark toggle. The <head> script already set data-theme (saved or system) before
+  // paint; here we just flip it, persist the choice, and keep the browser chrome color in sync.
+  $("#themeToggle").addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("mtg_theme", next); } catch {}
+    syncThemeColor();
   });
   // "Preview the cut": re-simulate the draw figures against the leaner build the advice
   // recommends, without touching the real build. Re-render comes via the next sim pass.

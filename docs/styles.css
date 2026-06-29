@@ -80,9 +80,22 @@ body {
 .pielet i[data-c="B"]{ background: var(--B); }
 .pielet i[data-c="R"]{ background: var(--R); }
 .pielet i[data-c="G"]{ background: var(--G); }
+.topbar-right { display: flex; align-items: center; gap: 16px; }
 .topbar-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .topbar-status { font-size: 13px; color: var(--ink-dim); letter-spacing: .02em; }
 .data-meta { font-size: 11px; color: var(--ink-dim); }
+/* light/dark toggle — shows the icon for the mode you'd switch TO (sun in dark, moon in light) */
+.theme-toggle {
+  flex: none; width: 36px; height: 36px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-dim);
+  cursor: pointer; display: grid; place-items: center;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.theme-toggle:hover { color: var(--parchment); border-color: var(--ink-dim); }
+.theme-toggle .ti { width: 17px; height: 17px; }
+.theme-toggle .ti-moon { display: none; }
+:root[data-theme="light"] .theme-toggle .ti-sun { display: none; }
+:root[data-theme="light"] .theme-toggle .ti-moon { display: block; }
 
 #deckText.dropping { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,162,39,.25); }
 
@@ -698,3 +711,44 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ============================================================
+   Light theme — "the table by day". The same warm, gold-accented
+   identity flipped onto a parchment ground. Dark stays the default;
+   this overrides the tokens plus the few decorations that assumed a
+   dark background. (Toggle in the topbar; persisted + system-aware.)
+   ============================================================ */
+:root[data-theme="light"] {
+  --table:      #efe6d3;   /* warm parchment page */
+  --table-2:    #e4d6ba;   /* gradient foot */
+  --surface:    #fbf6ec;   /* raised panel — near-white warm */
+  --surface-2:  #f1e8d5;   /* inputs, tiles */
+  --line:       #d8c9aa;   /* hairline */
+  --parchment:  #2a2317;   /* headings — now a dark warm ink */
+  --ink:        #4a4030;   /* body text */
+  --ink-dim:    #6e6450;   /* captions — clears AA on the light surfaces */
+  --gold:       #b8911c;
+  --gold-soft:  #876908;   /* accent numbers on light — deep enough to read */
+  --gold-bright:#caa42a;
+  --guide:      #1d7c98;   /* informational accent — deepened for light */
+  --warn:       #a4610d;
+  --shadow:     0 10px 28px -14px rgba(70,52,20,.35);
+  --W: #e4d59a;            /* deeper cream so the White pip + bar read on parchment */
+}
+/* the topbar veil flips from a dark wash to a light one */
+:root[data-theme="light"] .topbar { background: linear-gradient(180deg, rgba(255,251,240,.7), transparent); }
+/* selected / active states used a light-on-dark tint; use a dark-on-light wash instead */
+:root[data-theme="light"] .seg-btn.on,
+:root[data-theme="light"] .chip.on { background: rgba(42,35,23,.10); }
+:root[data-theme="light"] .info-dot[aria-expanded="true"] { background: rgba(42,35,23,.12); }
+:root[data-theme="light"] .rec-option.on .ro-name { color: var(--gold-soft); }
+/* on-card chrome sits on the (always dark) card art, so keep its text light in both
+   themes — otherwise --parchment flips dark and vanishes against the art. */
+:root[data-theme="light"] .spell .qty,
+:root[data-theme="light"] .spell .badge .bp,
+:root[data-theme="light"] .sim-pill .sp-p,
+:root[data-theme="light"] .tile .step-n,
+:root[data-theme="light"] .dig-tag,
+:root[data-theme="light"] .cost-tag,
+:root[data-theme="light"] .sim-pill svg.axis-ico.timing { color: #f2ead7; }
+:root[data-theme="light"] .sim-pill .sp-sep { color: #c2b69b; }
