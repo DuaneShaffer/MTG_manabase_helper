@@ -79,6 +79,12 @@
         </div>
         <p class="why-note" id="landWhyNote" hidden></p>
 
+        <!-- Sideboard guidance: how many lands you can shave on the draw and still match
+             your on-the-play reliability — and what that does to your draw %, so you can
+             judge the cut yourself. Sits by the land-count rows (not in the card strip, so
+             it never reflows the grid). Filled live by renderDrawSlack(). -->
+        <p class="pd-advice" id="pdAdvice" hidden></p>
+
         <!-- Your current manabase, editable in place — the same row shape as the
              Recommend drawer so "your build" and "recommended" read alike. -->
         <div class="build-list-wrap" id="buildWrap" hidden>
@@ -102,11 +108,6 @@
             <span class="gl-cap">castable on curve</span>
           </div>
         </div>
-
-        <!-- Sideboard guidance: how many lands you can shave on the draw and still match
-             your on-the-play reliability. Lives at the panel foot so it never reflows the
-             card grid. Filled live by renderDrawSlack(). -->
-        <p class="pd-advice" id="pdAdvice" hidden></p>
       </section>
     </aside>
 

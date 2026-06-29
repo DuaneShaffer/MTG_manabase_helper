@@ -832,32 +832,37 @@ function computeDrawSlack() {
   const drawCount = smoothCount() + digCount();
   const overall = (lands, onPlay) =>
     simulateDeck(state.spells, lands, state.deckSize, { trials: 4000, seed: BATTLE_SEED, drawCount, onPlay }).overall;
-  const playBar = overall(base, true);   // on the play, full build — the bar to clear
+  const playBar = overall(base, true);          // on the play, full build — the bar to clear
   let work = base.map((l) => ({ ...l }));
-  let cut = 0, color = null;
+  let cut = 0, color = null, drawAfter = overall(base, false);   // on the draw, before any cut
   while (cut < 2) {
     const idx = cutTargetIdx(work);
     if (idx < 0) break;
     const trial = work.map((l) => ({ ...l }));
     trial[idx] = { ...trial[idx], count: trial[idx].count - 1 };
-    if (overall(trial.filter((l) => l.count > 0), false) < playBar) break;  // cut would drop below play
-    work = trial; cut++; color = trial[idx].colors[0];
+    const d = overall(trial.filter((l) => l.count > 0), false);
+    if (d < playBar) break;                      // cutting further would drop below the play bar
+    work = trial; cut++; color = trial[idx].colors[0]; drawAfter = d;
   }
-  return { cut, color, total };
+  return { cut, color, total, playBar, drawAfter };
 }
 
 function renderDrawSlack() {
   const box = $("#pdAdvice");
   if (!box) return;
   if (!state.spells.length) { box.hidden = true; return; }
-  const { cut, color, total } = computeDrawSlack();
+  const { cut, color, total, playBar, drawAfter } = computeDrawSlack();
   if (!total) { box.hidden = true; return; }
+  const lead = `<span class="pa-h">On the draw</span> you see an extra card each game`;
   if (cut <= 0) {
-    box.innerHTML = `On the draw you see an extra card each game — but this build has no land to spare, so keep all <strong>${total}</strong>.`;
+    box.innerHTML = `${lead} — but this build has no land to spare, so keep all <strong>${total}</strong>.`;
   } else {
     const lands = cut === 1 ? "<strong>1 land</strong>" : `<strong>${cut} lands</strong>`;
-    const which = color ? ` — a ${COLOR_NAMES[color]} basic, your most over-supplied color —` : "";
-    box.innerHTML = `On the draw you see an extra card each game. You can cut ${lands}${which} for a spell and still cast your curve as reliably as on the play.`;
+    const which = color ? ` (a ${COLOR_NAMES[color]} basic, your most over-supplied color)` : "";
+    // Show the effect so the call is yours: the post-cut draw % vs your current play %.
+    box.innerHTML = `${lead}, so you can run leaner. Cut ${lands}${which} for a spell and your ` +
+      `weakest card still casts <strong>${pct(drawAfter)}</strong> of games on the draw — at or above ` +
+      `its <strong>${pct(playBar)}</strong> on the play today.`;
   }
   box.hidden = false;
 }

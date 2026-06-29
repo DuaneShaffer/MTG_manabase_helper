@@ -213,6 +213,7 @@ section.deck-input, section.dashboard, section.tools {
   border-radius: var(--radius-sm); padding: 10px 12px; }
 .pd-advice[hidden] { display: none; }
 .pd-advice strong { color: var(--parchment); font-weight: 600; }
+.pd-advice .pa-h { color: var(--guide); font-weight: 600; }
 .overall { display: flex; align-items: center; gap: 10px; }
 .overall[hidden] { display: none; }
 /* overall headline = the weakest card's % in a tinted chip (no letter) */
