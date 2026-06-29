@@ -889,26 +889,47 @@ function scheduleSim() {
   clearTimeout(_simTimer);
   _simTimer = setTimeout(() => idle(doSimulate), 130);
 }
+// Memoized sim results so toggling "Preview the cut" never recomputes the real build's
+// figures. Keyed by a build signature; the leaner cut version is filled in lazily.
+const simCache = { key: null, play: null, drawFull: null, drawCut: null, slack: null };
+
+// Everything the simulation + the cut plan depend on. Zero-count lands are dropped so a
+// land bumped up then back down doesn't spuriously miss the cache.
+function simKey(drawCount, fetches) {
+  const counts = {};
+  for (const [n, c] of Object.entries(state.counts)) if (c > 0) counts[n] = c;
+  return JSON.stringify({ counts, drawCount, fetches, deck: state.deckSize,
+    req: state.requirements, spells: state.spells.map((s) => s.name) });
+}
+
 function doSimulate() {
   if (!state.spells.length) return;
-  const lands = [];
-  for (const { land } of state.tiles.values()) {
-    const c = state.counts[land.name] || 0;
-    if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, basic: !!land.basic, needsBasic: !!land.needsBasic, slow: !!land.slow, untapBasic: !!land.untapBasic, count: c });
-  }
+  const lands = currentSimLands();
   // Both cheap smoothers and mid-cost diggers help you find lands in a real game.
-  // Run both seatings so each card shows on-the-play → on-the-draw side by side.
   const drawCount = smoothCount() + digCount();
   const fetches = fetchCount();
-  // The draw-cut recommendation (and the leaner build it implies). Build stays as-is —
-  // when "Preview the cut" is on, only the DRAW seating simulates that leaner build.
-  const slack = computeDrawSlack();
+  // On a build/deck change, recompute the real build's play + on-the-draw figures and the
+  // cut plan once, and clear the lazy cut version. Seeded (common random numbers) so the
+  // figures stay stable between edits and the preview moves only the cards a cut affects.
+  const key = simKey(drawCount, fetches);
+  if (simCache.key !== key) {
+    const opts = { trials: 5000, drawCount, fetchCount: fetches, seed: BATTLE_SEED };
+    simCache.key = key;
+    simCache.play = simulateDeck(state.spells, lands, state.deckSize, { ...opts, onPlay: true });
+    simCache.drawFull = simulateDeck(state.spells, lands, state.deckSize, { ...opts, onPlay: false });
+    simCache.slack = computeDrawSlack();
+    simCache.drawCut = null;            // lazy — only built when the user actually previews
+  }
+  const slack = simCache.slack;
   const previewing = state.previewCut && slack.cut > 0;
-  const drawLands = previewing ? slack.cutLands : lands;
-  // Seed both (common random numbers): the figures stay stable between edits, and
-  // toggling the preview moves only the cards a cut genuinely affects — no MC jitter.
-  const resPlay = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount, fetchCount: fetches, onPlay: true, seed: BATTLE_SEED });
-  const resDraw = simulateDeck(state.spells, drawLands, state.deckSize, { trials: 5000, drawCount, fetchCount: fetches, onPlay: false, seed: BATTLE_SEED });
+  // Lazily simulate the leaner (cut) build the first time it's previewed, then cache it —
+  // so swapping into the preview costs one sim and reverting costs none.
+  if (previewing && !simCache.drawCut) {
+    simCache.drawCut = simulateDeck(state.spells, slack.cutLands, state.deckSize,
+      { trials: 5000, drawCount, fetchCount: fetches, seed: BATTLE_SEED, onPlay: false });
+  }
+  const resPlay = simCache.play;
+  const resDraw = previewing ? simCache.drawCut : simCache.drawFull;
   // Refresh both figures on each card's clock pill — the model badge stays as-is. The
   // play figure is always your real build; the draw figure follows the preview.
   for (const spell of state.spells) {

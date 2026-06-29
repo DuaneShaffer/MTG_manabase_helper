@@ -64,10 +64,8 @@
       </section>
 
       <section class="dashboard">
-        <h2>Mana sources</h2>
-        <p class="dash-empty" id="dashEmpty">Paste a deck and these pips ignite as each color's sources are covered.</p>
-        <div class="colors" id="colors"></div>
-        <div class="total-row">
+        <h2>Your manabase</h2>
+        <div class="total-row total-row--first">
           <span>Lands in build</span>
           <span class="total-num" id="totalLands">0</span>
         </div>
@@ -186,6 +184,14 @@
             the land <em>count</em>, not the fixing.</p>
         </div>
         <div class="spell-grid" id="spellGrid"></div>
+      </section>
+
+      <!-- Mana sources: the five WUBRG coverage meters, laid out as a horizontal
+           strip under the deck so per-color supply reads at a glance beside the curve. -->
+      <section class="dashboard mana-bar" id="manaBar">
+        <h2>Mana sources</h2>
+        <p class="dash-empty" id="dashEmpty">Paste a deck and these pips ignite as each color's sources are covered.</p>
+        <div class="colors" id="colors"></div>
       </section>
 
       <div class="grid-head">

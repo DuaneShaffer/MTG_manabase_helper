@@ -448,8 +448,17 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ---------- color dashboard (signature) ---------- */
-.colors { display: flex; flex-direction: column; gap: 12px; }
-.color-row { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 12px; }
+/* Horizontal strip of per-color meters (lives under the deck). Each color is a
+   compact cell: pip + count on top, the coverage bar below; wraps on narrow viewports. */
+.colors { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 18px; }
+.color-row {
+  display: grid; grid-template-columns: 34px 1fr;
+  grid-template-areas: "pip count" "bar bar";
+  align-items: center; gap: 7px 10px;
+}
+.color-row .pip { grid-area: pip; }
+.color-row .bar-wrap { grid-area: bar; }
+.color-row .count { grid-area: count; }
 .pip {
   width: 34px; height: 34px; border-radius: 50%;
   display: grid; place-items: center; font-weight: 700; font-size: 15px;
@@ -485,7 +494,7 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 .bar-label { font-size: 11px; color: var(--ink-dim); letter-spacing: .04em; }
 .count {
   font-variant-numeric: tabular-nums; font-weight: 700; font-size: 15px; color: var(--parchment);
-  min-width: 54px; text-align: right;
+  text-align: right;
 }
 .count .req { color: var(--ink-dim); font-weight: 500; }
 /* Shortfall is amber (off the WUBRG palette) so "you're short" never collides with the Red pip. */
@@ -495,6 +504,13 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 .total-row { display: flex; justify-content: space-between; align-items: baseline;
   margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line);
   font-size: 13px; color: var(--ink-dim); letter-spacing: .04em; }
+/* first row in the left "Your manabase" panel — no divider above it */
+.total-row--first { margin-top: 4px; padding-top: 0; border-top: none; }
+
+/* horizontal mana-sources strip under the deck */
+.mana-bar { margin-bottom: 20px; }
+.mana-bar .dash-empty { margin-bottom: 0; }
+.mana-bar .colors:empty { display: none; }
 .total-num { font-family: var(--font-display); font-size: 24px; color: var(--gold-soft); font-variant-numeric: tabular-nums; }
 
 /* ---------- grid toggles (Rares / Highlight fixers — live in the grid control bar) ---------- */
