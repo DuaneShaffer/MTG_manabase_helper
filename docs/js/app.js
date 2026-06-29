@@ -158,7 +158,6 @@ function buildDashboard() {
       <div class="pip" data-c="${c}">${c}</div>
       <div class="bar-wrap">
         <div class="bar"><div class="bar-fill"></div><div class="bar-req"></div></div>
-        <div class="bar-label">${COLOR_NAMES[c]}</div>
       </div>
       <div class="count"><span class="cur">0</span><span class="req"></span></div>`;
     wrap.appendChild(row);
