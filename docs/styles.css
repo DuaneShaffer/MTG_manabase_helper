@@ -212,7 +212,7 @@ section.deck-input, section.dashboard, section.tools {
 /* sideboard guidance — sits at the bottom-right of the deck section, below the grid
    (so it never reflows the cards). Guide hue (informational, not gold). */
 .pd-advice { font-size: 12px; color: var(--ink); line-height: 1.5; margin: 16px 0 0 auto;
-  max-width: 480px;
+  max-width: 560px;
   background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--guide);
   border-radius: var(--radius-sm); padding: 10px 12px; }
 .pd-advice[hidden] { display: none; }
@@ -462,7 +462,11 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 /* pip sits over the bar's left start (its centre at the bar's origin) */
 .color-row .pip { grid-area: bar; position: absolute; left: 0; top: 0; z-index: 2; }
 .color-row .bar-wrap { grid-area: bar; align-self: center; padding-left: 17px; }
-.color-row .count { grid-area: count; text-align: right; }
+/* counts sit below the bar, starting just past the pip bubble. A bare count
+   (no "/ req" half, e.g. an off-requirement "0") gets extra left padding so it
+   lands near where a full "16 / 17" would read, instead of hard against the pip. */
+.color-row .count { grid-area: count; text-align: left; padding-left: 40px; }
+.color-row .count:has(.req:empty) { padding-left: 58px; }
 .pip {
   width: 34px; height: 34px; border-radius: 50%;
   display: grid; place-items: center; font-weight: 700; font-size: 15px;
