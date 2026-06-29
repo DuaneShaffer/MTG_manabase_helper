@@ -20,7 +20,7 @@ const state = {
   deckSize: 60,
   landTarget: null,
   threshold: null,     // null = Karsten sliding; else flat float
-  suggest: false,
+  suggest: null,       // fixer glow: null = auto (glow while a color is short); true/false = user override
   raresOnly: false,
   search: "",
   sort: "name",
@@ -301,10 +301,17 @@ function applyTileState(land, tile) {
 }
 
 function markFixers() {
-  const need = state.suggest ? deficitColors() : null;
+  const deficit = deficitColors();
+  // Auto-engage while a color is short; the toggle is only an explicit override.
+  const on = state.suggest === null ? deficit.size > 0 : state.suggest;
+  const need = on ? deficit : null;
   for (const { el: tile, land } of state.tiles.values()) {
     tile.classList.toggle("fixer", !!need && land.colors.some((c) => need.has(c)));
   }
+  // Reflect the effective state on the toggle so an auto-on glow reads as active
+  // (and clickable to dismiss), not as an untouched control.
+  const toggle = $("#suggestToggle");
+  if (toggle) toggle.classList.toggle("on", on && deficit.size > 0);
 }
 
 function syncCountsToTiles() {
@@ -632,7 +639,7 @@ function renderSpellStrip() {
   const grid = $("#spellGrid");
   grid.innerHTML = "";
   state.spellCells = new Map();
-  if (!state.spells.length) { strip.hidden = true; $("#hudGrade").hidden = true; return; }
+  if (!state.spells.length) { strip.hidden = true; $("#hudGrade").hidden = true; $("#mobileGrade").hidden = true; return; }
   strip.hidden = false;
   for (const spell of state.spells) {
     const cell = el("div", "spell");
@@ -712,6 +719,7 @@ function doGrade() {
   ogl.textContent = pct(worst);
   ogl.dataset.g = grade(worst).letter;
   og.querySelector(".og-text").textContent = `Weakest card on curve, colors only`;
+  updateMobileGrade(pct(worst), grade(worst).letter);
 }
 
 // Display percentage, capped at 99% — the closed-form model conditions on hitting
@@ -719,6 +727,18 @@ function doGrade() {
 // is 100%. The simulator is also capped for consistency.
 function pct(p) {
   return Math.min(99, Math.round(p * 100)) + "%";
+}
+
+// Mirror the HUD's overall figure into the mobile-only chip (the sticky HUD is gone
+// on small screens). Mirrors whatever the HUD currently shows: colors first, then
+// the screw-aware sim once it resolves.
+function updateMobileGrade(text, g) {
+  const m = $("#mobileGrade");
+  if (!m) return;
+  m.hidden = false;
+  const letter = m.querySelector(".mg-letter");
+  letter.textContent = text;
+  letter.dataset.g = g;
 }
 
 /* ---------- Monte-Carlo validator (auto, lazy; includes mana screw) ---------- */
@@ -756,6 +776,7 @@ function doSimulate() {
   ogl.dataset.g = grade(res.overall).letter;
   og.querySelector(".og-text").textContent =
     `Weakest card in real games, incl. screw · ${pct(state.staticWorst != null ? state.staticWorst : res.overall)} on colors alone`;
+  updateMobileGrade(pct(res.overall), grade(res.overall).letter);
 }
 
 /* ---------- recommendation ---------- */
@@ -1008,6 +1029,9 @@ function selectRecOption(i) {
 }
 
 function recommend() {
+  // Apply REPLACES the whole build (state.counts = {}). Say so when there's a build
+  // to lose, so hand-tuning never vanishes by surprise.
+  $("#recApply").textContent = tally().total > 0 ? "Replace build with this" : "Apply to build";
   openDrawer($("#recDrawer"));
   computeAllRecs();
 }
@@ -1115,10 +1139,11 @@ function wireEvents() {
     else if (!exp.hidden) closeDrawer(exp);
     else if (!pop.hidden) pop.hidden = true;
   });
-  $("#suggestToggle").addEventListener("click", (e) => {
-    state.suggest = !state.suggest;
-    e.target.classList.toggle("on", state.suggest);
-    markFixers();  // highlight-only now; the Show control owns filtering
+  $("#suggestToggle").addEventListener("click", () => {
+    // Flip from whatever is currently showing — auto-on while short, else off.
+    const effective = state.suggest === null ? deficitColors().size > 0 : state.suggest;
+    state.suggest = !effective;
+    markFixers();  // markFixers owns the toggle's .on state; highlight-only (the Show control filters)
   });
   $("#raresToggle").addEventListener("click", (e) => {
     state.raresOnly = !state.raresOnly;

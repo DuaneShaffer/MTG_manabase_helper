@@ -183,15 +183,20 @@ def slim_land(card):
         out["needsBasic"] = True
     # Basic-fetch lands (Fabled Passage, Escape Tunnel): sacrifice to search up a
     # basic. They fix any color you run basics for, but the fetched land enters
-    # tapped, so model them as a slow (tapped) flexible source. Exclude lands that
-    # already make mana directly (e.g. Demolition Field makes {C} + can fetch) —
-    # those are utility, not fetches.
+    # tapped, so model them as a slow (tapped) flexible source.
     low = _oracle(card).lower()
-    if ("search your library for a basic land" in low and "sacrifice" in low
-            and not card.get("produced_mana")):
+    basic_fetch = "search your library for a basic land" in low and "sacrifice" in low
+    if basic_fetch and not card.get("produced_mana"):
         out["colors"] = sorted("WUBRG")
         out["tapped"] = True
         out["fetch"] = True
+    elif basic_fetch:
+        # Makes mana on its own (e.g. Demolition Field, Promising Vein make {C}), so
+        # it's a utility land — but its payoff is sacrificing to grab a basic, which
+        # is dead with no basics in the deck. Flag it so the recommender only runs it
+        # alongside a basic base (see optimize.js fetch_on gate), the same way check
+        # lands are gated on basics.
+        out["fetchesBasic"] = True
     # Slow land ("enters tapped unless you control two or more other lands"): kept
     # untapped (it IS untapped from turn 3, when the midrange/control decks that run
     # it are casting), but flagged so the simulator can treat it as tapped on turns

@@ -190,6 +190,13 @@ section.deck-input, section.dashboard, section.tools {
 }
 .grade-note[hidden] { display: none; }
 .grade-note strong { color: var(--parchment); font-weight: 600; }
+
+/* always-on key for the two per-card readings (colors pie · lands-on-time clock) */
+.strip-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 14px; }
+.strip-legend .sl-item { display: inline-flex; align-items: center; gap: 7px;
+  font-size: 11.5px; color: var(--ink-dim); }
+.strip-legend .sl-t strong { color: var(--parchment); font-weight: 600; }
+.strip-legend .axis-ico { flex: none; }
 .overall { display: flex; align-items: center; gap: 10px; }
 .overall[hidden] { display: none; }
 /* overall headline = the weakest card's % in a tinted chip (no letter) */
@@ -528,7 +535,27 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 .colors.ignite .color-row:nth-child(4) .pip { transition-delay: .27s; }
 .colors.ignite .color-row:nth-child(5) .pip { transition-delay: .36s; }
 
+/* Compact overall-grade chip — surfaces only on mobile (see media query below). */
+.mobile-grade { display: none; }
+.mobile-grade .mg-letter {
+  font-family: var(--font-display); font-weight: 700; font-size: 15px; line-height: 1;
+  padding: 5px 9px; border-radius: 999px; color: #12100c; background: var(--grade-C);
+  font-variant-numeric: tabular-nums;
+}
+.mobile-grade .mg-letter[data-g="A"] { background: var(--grade-A); }
+.mobile-grade .mg-letter[data-g="B"] { background: var(--grade-B); }
+.mobile-grade .mg-letter[data-g="C"] { background: var(--grade-C); }
+.mobile-grade .mg-letter[data-g="D"] { background: var(--grade-D); }
+.mobile-grade .mg-letter[data-g="F"] { background: var(--grade-F); }
+.mobile-grade .mg-text { font-size: 11px; color: var(--ink-dim); letter-spacing: .04em; }
+
 /* ---------- responsive ---------- */
+/* Touch devices never fire :hover, so the hover-revealed steppers would strand a
+   land you haven't added yet (no visible way to add it). Pin them open here. */
+@media (hover: none) {
+  .stepper { opacity: 1; transform: none; }
+  .build-row .b-step { opacity: 1; }
+}
 @media (max-width: 920px) {
   .layout { grid-template-columns: 1fr; }
   .panel { position: static; }
@@ -536,6 +563,14 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
   .info-dot { width: 28px; height: 28px; font-size: 13px; }
   .icon-btn { padding: 4px 10px; }
   .step-btn { width: 32px; height: 32px; }
+  /* The sticky grade HUD is gone on mobile — pin a compact read-out bottom-right
+     so editing lands deep in the grid still shows the deck's overall castability. */
+  .mobile-grade:not([hidden]) {
+    display: flex; align-items: center; gap: 8px;
+    position: fixed; right: 14px; bottom: 14px; z-index: 30;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 13px 6px 6px; box-shadow: var(--shadow);
+  }
 }
 /* Mobile topbar: don't let the verbose status fight the wordmark in one row. */
 @media (max-width: 520px) {

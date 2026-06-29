@@ -142,6 +142,11 @@ export function candidatePool(requirements, lands) {
         gated, typeGate: land.typeGate || [], needsBasic: !!land.needsBasic, types: basicTypesOf(land),
         reliable: colors.filter((c) => !gated.includes(c)), // colors available without the gate
         utility: isUtility, pop: _popularity[land.name]?.score || 0,
+        // Basic-fetch lands: pure fetches (Fabled Passage — no mana of its own) and
+        // basic-fetch utility (Demolition Field — makes {C} but sacrifices to grab a
+        // basic). Both are dead with no basics to fetch, so the model caps their
+        // count at the build's basic count (the fetchcap constraint below).
+        basicDep: !!(land.fetch || land.fetchesBasic),
       };
       groups.set(sig, g);
     }
@@ -282,6 +287,22 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
     constraints.basicgate = { min: 0 };     // Σ basics − BASIC_BASE·basics_on ≥ 0  (on ⇒ ≥ base)
     constraints.basics_cap = { max: 1 };    // binary
     for (const cand of pool) if (cand.basic) variables[cand.name].basicgate = (variables[cand.name].basicgate || 0) + 1;
+  }
+
+  // Basic-fetch cap: a fetch / basic-fetch land (Fabled Passage, Demolition Field)
+  // sacrifices to find ONE basic, then it's a dead colorless land. So a basic-fetch
+  // land is only worth running to the extent there's a basic for it to turn into —
+  // its usefulness is bounded by the build's basic count. Couple them directly:
+  // Σ(basic-fetch lands) ≤ Σ(basics). With zero basics that forces them out entirely
+  // (the reported Field-of-Ruin-with-no-basics bug); more generally it stops the
+  // solver running three Demolition Fields off a single token basic. The solver may
+  // still add basics to unlock them, but only when those basics are worth their slot.
+  if (pool.some((c) => c.basicDep)) {
+    constraints.fetchcap = { min: 0 };    // Σ basics − Σ(basic-fetch lands) ≥ 0
+    for (const cand of pool) {
+      if (cand.basic) variables[cand.name].fetchcap = (variables[cand.name].fetchcap || 0) + 1;
+      if (cand.basicDep) variables[cand.name].fetchcap = (variables[cand.name].fetchcap || 0) - 1;
+    }
   }
 
   pool.forEach((cand, i) => {

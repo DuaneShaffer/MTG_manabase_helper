@@ -118,6 +118,20 @@
             <button class="btn btn-ghost" id="exportBtn" disabled>Export</button>
           </div>
         </div>
+        <!-- Always-visible key for the two readings each card carries — the product's
+             core idea, taught at the point of contact rather than only behind the (i). -->
+        <div class="strip-legend" aria-hidden="true">
+          <span class="sl-item">
+            <span class="axis-ico colors"></span>
+            <span class="sl-t"><strong>colors</strong> — if you hit your land drops</span>
+          </span>
+          <span class="sl-item">
+            <svg class="axis-ico timing" viewBox="0 0 16 16" role="img"><title>lands on time</title>
+              <circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+              <path d="M8 8 L8 4.2 M8 8 L10.7 9.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            <span class="sl-t"><strong>lands on time</strong> — real games, incl. screw &amp; flood</span>
+          </span>
+        </div>
         <p class="grade-note" id="gradeNote" hidden>
           Each card carries two readings, both updating live as you edit the build. The lower pill
           (marked with a <strong>mana-pie</strong>) is the <strong>colors</strong> reading — a
@@ -158,6 +172,13 @@
       <div class="empty" id="gridEmpty" hidden></div>
     </section>
   </main>
+
+  <!-- Compact overall-grade chip, mobile only — keeps the feedback loop alive when
+       the sticky panel collapses and the grid scrolls far below the grades. -->
+  <div class="mobile-grade" id="mobileGrade" hidden aria-hidden="true">
+    <span class="mg-letter"></span>
+    <span class="mg-text">on curve</span>
+  </div>
 
   <!-- Recommendation drawer -->
   <div class="drawer" id="recDrawer" role="dialog" aria-modal="true" aria-labelledby="recTitle" hidden>

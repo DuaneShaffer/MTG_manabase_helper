@@ -121,6 +121,40 @@ async function run() {
   ok("untapped objective won't pad with a check land that has no basics to enable it",
     padBastions === 0 || padBasics > 0);
 
+  // --- Basic-fetch gating (Demolition Field / Fabled Passage) ---------------
+  // A basic-fetch land's payoff is sacrificing to grab a basic, so it's dead with
+  // no basics to fetch. Even as a metagame-proven utility land it must not pad a
+  // zero-basic build. Demolition Field makes {C} (so it's a colorless utility land)
+  // and is flagged fetchesBasic.
+  const demoField = { name: "Demolition Field", colors: [], fetchesBasic: true,
+    type: "Land", tapped: false, basic: false };
+  const ubA = { name: "UB Dual A", colors: ["U", "B"], type: "Land", tapped: false, basic: false };
+  const ubB = { name: "UB Dual B", colors: ["U", "B"], type: "Land", tapped: false, basic: false };
+  const ubC = { name: "UB Dual C", colors: ["U", "B"], type: "Land", tapped: false, basic: false };
+  setLandPopularity({ "Demolition Field": { score: 0.5 } }); // admit it as utility
+
+  // No basics anywhere in the pool: the fetch land can never be turned on, so it
+  // stays out even though the untapped fixing leaves excess slots it would gladly take.
+  const noBasics = await optimizeManabase({ requirements: { W: 0, U: 4, B: 4, R: 0, G: 0 },
+    lands: [ubA, ubB, demoField], landTarget: 8, objective: "untapped" });
+  ok("basic-fetch land excluded when the build can run no basics",
+    noBasics.feasible && (noBasics.counts["Demolition Field"] || 0) === 0);
+
+  // Basics ARE available and the duals could cover the whole target without them.
+  // Pre-fix the solver padded the excess slots with Demolition Field and zero basics;
+  // now a basic-fetch land can never outnumber the basics it could fetch — each one
+  // finds a single basic, then it's a dead colorless land. So it appears only backed
+  // 1:1 by basics, never off a token basic and never in a zero-basic build.
+  const fetchPad = await optimizeManabase({ requirements: { W: 0, U: 4, B: 4, R: 0, G: 0 },
+    lands: [ubA, ubB, ubC, demoField, plains, island,
+      { name: "Swamp", colors: ["B"], type: "Basic Land — Swamp", tapped: false, basic: true }],
+    landTarget: 12, objective: "untapped" });
+  const fetchN = fetchPad.counts["Demolition Field"] || 0;
+  const fetchBasics = (fetchPad.counts["Island"] || 0) + (fetchPad.counts["Swamp"] || 0) + (fetchPad.counts["Plains"] || 0);
+  ok("basic-fetch lands never outnumber the basics they could fetch",
+    fetchPad.feasible && fetchN <= fetchBasics);
+  setLandPopularity({}); // reset so it doesn't leak into later tests
+
   // --- Battle-tested: sim-in-the-loop, flood-anchored count selection -------
   // The simulator never penalizes flood, so its castability only rises with land
   // count. Battle-tested supplies the missing counterweight: a flood penalty above
