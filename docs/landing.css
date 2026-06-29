@@ -73,6 +73,19 @@ a { color: inherit; }
   transition: color .15s, border-color .15s, background .15s;
 }
 .nav-link:hover { color: var(--parchment); border-color: var(--ink-dim); }
+.nav-right { display: flex; align-items: center; gap: 14px; }
+/* light/dark toggle — shows the icon for the mode you'd switch TO (sun in dark, moon in light) */
+.theme-toggle {
+  flex: none; width: 36px; height: 36px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-dim);
+  cursor: pointer; display: grid; place-items: center;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.theme-toggle:hover { color: var(--parchment); border-color: var(--ink-dim); }
+.theme-toggle .ti { width: 17px; height: 17px; }
+.theme-toggle .ti-moon { display: none; }
+:root[data-theme="light"] .theme-toggle .ti-sun { display: none; }
+:root[data-theme="light"] .theme-toggle .ti-moon { display: block; }
 
 /* ---------- buttons ---------- */
 .btn-gold {
@@ -275,3 +288,29 @@ a { color: inherit; }
   .reveal { opacity: 1; transform: none; }
   .grade-num { opacity: 1; transform: none; }
 }
+
+/* ============================================================
+   Light theme — "the table by day", mirroring the app's tokens so
+   the page and the tool stay one product across the toggle. Dark is
+   the default; this overrides the palette plus the dark-only veils.
+   ============================================================ */
+:root[data-theme="light"] {
+  --table:      #efe6d3;
+  --table-2:    #e4d6ba;
+  --surface:    #fbf6ec;
+  --surface-2:  #f1e8d5;
+  --line:       #d8c9aa;
+  --parchment:  #2a2317;
+  --ink:        #4a4030;
+  --ink-dim:    #6e6450;
+  --gold:       #b8911c;
+  --gold-soft:  #876908;
+  --gold-bright:#caa42a;
+  --W: #e4d59a;                 /* deeper cream so the White pip reads on parchment */
+  --shadow: 0 18px 50px -20px rgba(70,52,20,.4);
+}
+/* the sticky nav veil flips from a dark wash to a light one */
+:root[data-theme="light"] .nav { background: rgba(255,251,240,.78); }
+/* the WUBRG floor-glow is tuned for a dark stage — soften it so it reads as a warm
+   wash on parchment instead of muddy smudges */
+:root[data-theme="light"] .hero-glow { opacity: .45; }
