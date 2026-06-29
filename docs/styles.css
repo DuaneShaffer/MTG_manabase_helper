@@ -198,12 +198,23 @@ section.deck-input, section.dashboard, section.tools {
 .grade-note .gn-tip { margin: 11px 0 0; padding-top: 10px; border-top: 1px solid var(--line); }
 .grade-note .gn-tip em { color: var(--parchment); font-style: normal; font-weight: 600; }
 
-/* always-on key for the two per-card readings (colors pie · lands-on-time clock) */
-.strip-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 14px; }
+/* always-on key for the two per-card readings (colors pie · lands-on-time clock),
+   with the play/draw toggle right-aligned — it modifies the lands-on-time reading. */
+.strip-legend { display: flex; flex-wrap: wrap; align-items: center;
+  justify-content: space-between; gap: 8px 18px; margin: 0 0 14px; }
+.strip-legend .sl-keys { display: flex; flex-wrap: wrap; gap: 6px 18px; }
 .strip-legend .sl-item { display: inline-flex; align-items: center; gap: 7px;
   font-size: 11.5px; color: var(--ink-dim); }
 .strip-legend .sl-t strong { color: var(--parchment); font-weight: 600; }
 .strip-legend .axis-ico { flex: none; }
+.pd-toggle { flex: none; }
+
+/* sideboard guidance, shown only on the draw — guide hue (informational, not gold) */
+.pd-advice { font-size: 12.5px; color: var(--ink); line-height: 1.5; margin: 0 0 14px;
+  background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--guide);
+  border-radius: var(--radius-sm); padding: 10px 12px; }
+.pd-advice[hidden] { display: none; }
+.pd-advice strong { color: var(--parchment); font-weight: 600; }
 .overall { display: flex; align-items: center; gap: 10px; }
 .overall[hidden] { display: none; }
 /* overall headline = the weakest card's % in a tinted chip (no letter) */

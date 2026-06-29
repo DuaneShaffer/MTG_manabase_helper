@@ -120,18 +120,29 @@
         </div>
         <!-- Always-visible key for the two readings each card carries — the product's
              core idea, taught at the point of contact rather than only behind the (i). -->
-        <div class="strip-legend" aria-hidden="true">
-          <span class="sl-item">
-            <span class="axis-ico colors"></span>
-            <span class="sl-t"><strong>colors</strong> — if you hit your land drops</span>
-          </span>
-          <span class="sl-item">
-            <svg class="axis-ico timing" viewBox="0 0 16 16" role="img"><title>lands on time</title>
-              <circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.4"/>
-              <path d="M8 8 L8 4.2 M8 8 L10.7 9.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-            <span class="sl-t"><strong>lands on time</strong> — keeps a 2–5 land opening hand</span>
-          </span>
+        <div class="strip-legend">
+          <div class="sl-keys" aria-hidden="true">
+            <span class="sl-item">
+              <span class="axis-ico colors"></span>
+              <span class="sl-t"><strong>colors</strong> — if you hit your land drops</span>
+            </span>
+            <span class="sl-item">
+              <svg class="axis-ico timing" viewBox="0 0 16 16" role="img"><title>lands on time</title>
+                <circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M8 8 L8 4.2 M8 8 L10.7 9.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+              <span class="sl-t"><strong>lands on time</strong> — keeps a 2–5 land opening hand</span>
+            </span>
+          </div>
+          <!-- The lands-on-time reading assumes you're on the play; flip to simulate the
+               draw step (worth +1 card seen each turn — a big swing on higher curves). -->
+          <div class="seg pd-toggle" id="playDraw" role="group" aria-label="Simulate lands on time on the play or on the draw">
+            <button class="seg-btn on" data-pd="play" type="button">On the play</button>
+            <button class="seg-btn" data-pd="draw" type="button">On the draw</button>
+          </div>
         </div>
+        <!-- Sideboard guidance — only on the draw: how many lands you can shave and
+             still match your on-the-play reliability. Filled live by renderDrawSlack(). -->
+        <p class="pd-advice" id="pdAdvice" hidden></p>
         <div class="grade-note" id="gradeNote" hidden>
           <div class="gn-row">
             <span class="axis-ico colors"></span>

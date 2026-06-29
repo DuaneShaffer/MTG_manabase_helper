@@ -20,6 +20,7 @@ const state = {
   deckSize: 60,
   landTarget: null,
   threshold: null,     // null = Karsten sliding; else flat float
+  onPlay: true,        // sim assumption: on the play (default) vs on the draw (+1 card seen / turn)
   suggest: null,       // fixer glow: null = auto (glow while a color is short); true/false = user override
   raresOnly: false,
   search: "",
@@ -766,7 +767,7 @@ function doSimulate() {
     if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, basic: !!land.basic, needsBasic: !!land.needsBasic, slow: !!land.slow, untapBasic: !!land.untapBasic, count: c });
   }
   // Both cheap smoothers and mid-cost diggers help you find lands in a real game.
-  const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount: smoothCount() + digCount() });
+  const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount: smoothCount() + digCount(), onPlay: state.onPlay });
   // Refresh the simulated pill on each card — the model badge stays as-is, so both
   // readings are visible together.
   for (const spell of state.spells) {
@@ -785,8 +786,75 @@ function doSimulate() {
   ogl.textContent = pct(res.overall);
   ogl.dataset.g = grade(res.overall).letter;
   og.querySelector(".og-text").textContent =
-    `Weakest card in real games, incl. screw · ${pct(state.staticWorst != null ? state.staticWorst : res.overall)} on colors alone`;
+    `Weakest card in real games (${state.onPlay ? "on the play" : "on the draw"}), incl. screw · ${pct(state.staticWorst != null ? state.staticWorst : res.overall)} on colors alone`;
   updateMobileGrade(pct(res.overall), grade(res.overall).letter);
+  renderDrawSlack();   // "you can cut N lands on the draw" guidance (no-op unless on the draw)
+}
+
+/* ---------- "land slack on the draw" sideboard guidance ---------- */
+// The current build as sim land tokens (same shape doSimulate builds).
+function currentSimLands() {
+  const lands = [];
+  for (const { land } of state.tiles.values()) {
+    const c = state.counts[land.name] || 0;
+    if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, basic: !!land.basic, needsBasic: !!land.needsBasic, slow: !!land.slow, untapBasic: !!land.untapBasic, count: c });
+  }
+  return lands;
+}
+
+// The basic to shave: the one whose color the build over-supplies most vs. its
+// requirement (cutting your most redundant source is the safe move). Index, or -1.
+function cutTargetIdx(lands) {
+  const supply = { W: 0, U: 0, B: 0, R: 0, G: 0 };
+  for (const l of lands) for (const c of l.colors) supply[c] += l.count;
+  let best = -1, bestSlack = -Infinity;
+  lands.forEach((l, i) => {
+    if (!l.basic || l.count <= 0 || l.colors.length !== 1) return;
+    const slack = supply[l.colors[0]] - (state.requirements[l.colors[0]] || 0);
+    if (slack > bestSlack) { bestSlack = slack; best = i; }
+  });
+  return best;
+}
+
+// How many lands you can cut while on the draw and still match your on-the-play
+// reliability — the established "−1 land on the draw" sideboard move, quantified.
+// Common random numbers (fixed per-trial seed) keep the play-vs-draw bar comparison
+// low-variance; capped at 2 (the observed range) to stay cheap.
+function computeDrawSlack() {
+  const base = currentSimLands();
+  const total = base.reduce((s, l) => s + l.count, 0);
+  if (!state.spells.length || !total) return { cut: 0, color: null, total };
+  const drawCount = smoothCount() + digCount();
+  const overall = (lands, onPlay) =>
+    simulateDeck(state.spells, lands, state.deckSize, { trials: 4000, seed: BATTLE_SEED, drawCount, onPlay }).overall;
+  const playBar = overall(base, true);   // on the play, full build — the bar to clear
+  let work = base.map((l) => ({ ...l }));
+  let cut = 0, color = null;
+  while (cut < 2) {
+    const idx = cutTargetIdx(work);
+    if (idx < 0) break;
+    const trial = work.map((l) => ({ ...l }));
+    trial[idx] = { ...trial[idx], count: trial[idx].count - 1 };
+    if (overall(trial.filter((l) => l.count > 0), false) < playBar) break;  // cut would drop below play
+    work = trial; cut++; color = trial[idx].colors[0];
+  }
+  return { cut, color, total };
+}
+
+function renderDrawSlack() {
+  const box = $("#pdAdvice");
+  if (!box) return;
+  if (state.onPlay || !state.spells.length) { box.hidden = true; return; }
+  const { cut, color, total } = computeDrawSlack();
+  if (!total) { box.hidden = true; return; }
+  if (cut <= 0) {
+    box.innerHTML = `On the draw you see an extra card each game — but this build has no land to spare, so keep all <strong>${total}</strong>.`;
+  } else {
+    const lands = cut === 1 ? "<strong>1 land</strong>" : `<strong>${cut} lands</strong>`;
+    const which = color ? ` — a ${COLOR_NAMES[color]} basic, your most over-supplied color —` : "";
+    box.innerHTML = `On the draw you see an extra card each game. You can cut ${lands}${which} for a spell and still cast your curve as reliably as on the play.`;
+  }
+  box.hidden = false;
 }
 
 /* ---------- recommendation ---------- */
@@ -1186,6 +1254,18 @@ function wireEvents() {
   $("#confSel").addEventListener("change", (e) => {
     state.threshold = e.target.value ? parseFloat(e.target.value) : null;
     if ($("#deckText").value.trim()) analyzeDeck();
+  });
+  // Play / draw: re-simulate under the new assumption. Only the sim (clock) reading
+  // and its sideboard advice respond — the colors/Karsten badge has no draw notion.
+  $("#playDraw").addEventListener("click", (e) => {
+    const btn = e.target.closest(".seg-btn");
+    if (!btn) return;
+    const onPlay = btn.dataset.pd === "play";
+    if (onPlay === state.onPlay) return;
+    state.onPlay = onPlay;
+    for (const b of document.querySelectorAll("#playDraw .seg-btn")) b.classList.toggle("on", b === btn);
+    if (state.onPlay) $("#pdAdvice").hidden = true;   // hide stale draw advice immediately
+    scheduleSim();
   });
   $("#searchBox").addEventListener("input", (e) => {
     state.search = e.target.value.toLowerCase().trim();

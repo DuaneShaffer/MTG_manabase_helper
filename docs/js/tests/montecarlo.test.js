@@ -102,6 +102,23 @@ const ok = (m) => { n++; console.log("ok -", m); };
   ok("a basic in play untaps the untapBasic lands");
 }
 
+// On the draw (onPlay:false) you see one extra card by each cast turn, so castability
+// can only rise — and on higher curves it rises a lot. This invariant underpins the
+// play/draw toggle and the "cut a land on the draw" sideboard guidance.
+{
+  const lands = [{ colors: ["W"], tapped: false, count: 24 }];
+  const play = sim([W4], lands, { onPlay: true });
+  const draw = sim([W4], lands, { onPlay: false });
+  assert.ok(draw.bySpell["W four-drop"] >= play.bySpell["W four-drop"],
+    `on the draw >= on the play: ${draw.bySpell["W four-drop"]} vs ${play.bySpell["W four-drop"]}`);
+  // And it's a real gap on a 4-drop at a modest land count, not a rounding wobble.
+  const tight = [{ colors: ["W"], tapped: false, count: 16 }];
+  const p2 = sim([W4], tight, { onPlay: true }).bySpell["W four-drop"];
+  const d2 = sim([W4], tight, { onPlay: false }).bySpell["W four-drop"];
+  assert.ok(d2 - p2 > 0.02, `draw beats play by a real margin: +${((d2 - p2) * 100).toFixed(1)}pts`);
+  ok("on the draw raises castability (and meaningfully on higher curves)");
+}
+
 // A numeric `seed` makes a run fully reproducible.
 {
   const opts = { trials: 2000, seed: 99 };
