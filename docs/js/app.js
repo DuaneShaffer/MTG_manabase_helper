@@ -20,6 +20,7 @@ const state = {
   deckSize: 60,
   landTarget: null,
   threshold: null,     // null = Karsten sliding; else flat float
+  previewCut: false,   // "Preview the cut": draw figures simulate the leaner build (real build untouched)
   suggest: null,       // fixer glow: null = auto (glow while a color is short); true/false = user override
   raresOnly: false,
   search: "",
@@ -289,6 +290,7 @@ function changeCount(land, delta) {
   if (next < 0 || (!land.basic && next > 4)) return;
   state.counts[land.name] = next;
   entry.numEl.textContent = next;
+  state.previewCut = false;   // editing the build invalidates the previewed cut basis
   applyTileState(land, entry.el);
   refreshDashboard();
   refreshBuildList();
@@ -771,9 +773,17 @@ function doSimulate() {
   // Both cheap smoothers and mid-cost diggers help you find lands in a real game.
   // Run both seatings so each card shows on-the-play → on-the-draw side by side.
   const drawCount = smoothCount() + digCount();
-  const resPlay = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount, onPlay: true });
-  const resDraw = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount, onPlay: false });
-  // Refresh both figures on each card's clock pill — the model badge stays as-is.
+  // The draw-cut recommendation (and the leaner build it implies). Build stays as-is —
+  // when "Preview the cut" is on, only the DRAW seating simulates that leaner build.
+  const slack = computeDrawSlack();
+  const previewing = state.previewCut && slack.cut > 0;
+  const drawLands = previewing ? slack.cutLands : lands;
+  // Seed both (common random numbers): the figures stay stable between edits, and
+  // toggling the preview moves only the cards a cut genuinely affects — no MC jitter.
+  const resPlay = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount, onPlay: true, seed: BATTLE_SEED });
+  const resDraw = simulateDeck(state.spells, drawLands, state.deckSize, { trials: 5000, drawCount, onPlay: false, seed: BATTLE_SEED });
+  // Refresh both figures on each card's clock pill — the model badge stays as-is. The
+  // play figure is always your real build; the draw figure follows the preview.
   for (const spell of state.spells) {
     const cell = state.spellCells.get(spell.name);
     if (!cell) continue;
@@ -783,6 +793,7 @@ function doSimulate() {
     drawEl.textContent = pct(pd); drawEl.dataset.g = grade(pd).letter;
     cell.querySelector(".sim-pill").hidden = false;
   }
+  $("#spellGrid").classList.toggle("preview-draw", previewing);   // dotted cue on the → figures
   // Overall headline = the true (simulated) weakest on the play (the conservative floor);
   // the draw figure and the colors model ride along as context.
   $("#hudGrade").hidden = false;
@@ -791,9 +802,9 @@ function doSimulate() {
   ogl.textContent = pct(resPlay.overall);
   ogl.dataset.g = grade(resPlay.overall).letter;
   og.querySelector(".og-text").textContent =
-    `Weakest card in real games, incl. screw · ${pct(resDraw.overall)} on the draw · ${pct(state.staticWorst != null ? state.staticWorst : resPlay.overall)} on colors alone`;
+    `Weakest card in real games, incl. screw · ${pct(resDraw.overall)} on the draw${previewing ? " (−" + slack.cut + ")" : ""} · ${pct(state.staticWorst != null ? state.staticWorst : resPlay.overall)} on colors alone`;
   updateMobileGrade(pct(resPlay.overall), grade(resPlay.overall).letter);
-  renderDrawSlack();   // "you can cut N lands on the draw" guidance, shown in the panel
+  renderDrawSlack(slack);   // "you can cut N lands on the draw" guidance + the preview button
 }
 
 /* ---------- "land slack on the draw" sideboard guidance ---------- */
@@ -844,26 +855,37 @@ function computeDrawSlack() {
     if (d < playBar) break;                      // cutting further would drop below the play bar
     work = trial; cut++; color = trial[idx].colors[0]; drawAfter = d;
   }
-  return { cut, color, total, playBar, drawAfter };
+  // cutLands: the leaner build the recommendation implies — used to PREVIEW the draw %
+  // (the real build is never modified).
+  return { cut, color, total, playBar, drawAfter, cutLands: work.filter((l) => l.count > 0) };
 }
 
-function renderDrawSlack() {
+// Renders the sideboard guidance + the "Preview the cut" toggle. `slack` is passed in
+// from doSimulate (computed once); falls back to computing it if called standalone.
+function renderDrawSlack(slack) {
   const box = $("#pdAdvice");
   if (!box) return;
   if (!state.spells.length) { box.hidden = true; return; }
-  const { cut, color, total, playBar, drawAfter } = computeDrawSlack();
+  const { cut, color, total, playBar, drawAfter } = slack || computeDrawSlack();
   if (!total) { box.hidden = true; return; }
   const lead = `<span class="pa-h">On the draw</span> you see an extra card each game`;
   if (cut <= 0) {
+    state.previewCut = false;
     box.innerHTML = `${lead} — but this build has no land to spare, so keep all <strong>${total}</strong>.`;
-  } else {
-    const lands = cut === 1 ? "<strong>1 land</strong>" : `<strong>${cut} lands</strong>`;
-    const which = color ? ` (a ${COLOR_NAMES[color]} basic, your most over-supplied color)` : "";
-    // Show the effect so the call is yours: the post-cut draw % vs your current play %.
-    box.innerHTML = `${lead}, so you can run leaner. Cut ${lands}${which} for a spell and your ` +
-      `weakest card still casts <strong>${pct(drawAfter)}</strong> of games on the draw — at or above ` +
-      `its <strong>${pct(playBar)}</strong> on the play today.`;
+    box.hidden = false;
+    return;
   }
+  const lands = cut === 1 ? "<strong>1 land</strong>" : `<strong>${cut} lands</strong>`;
+  const which = color ? ` (a ${COLOR_NAMES[color]} basic, your most over-supplied color)` : "";
+  const body = state.previewCut
+    ? `${lead}. The <span class="pa-h">→</span> figures now preview cutting ${lands}${which}: your weakest card ` +
+      `holds <strong>${pct(drawAfter)}</strong> on the draw, at or above its <strong>${pct(playBar)}</strong> ` +
+      `on the play. Your build is unchanged.`
+    : `${lead}, so you can run leaner. Cutting ${lands}${which} would leave your weakest card at ` +
+      `<strong>${pct(drawAfter)}</strong> on the draw — still at or above its <strong>${pct(playBar)}</strong> on the play.`;
+  const btn = `<button type="button" id="previewCutBtn" class="pa-btn${state.previewCut ? " on" : ""}">` +
+    `${state.previewCut ? "Show actual draw %" : "Preview the cut"}</button>`;
+  box.innerHTML = `${body} ${btn}`;
   box.hidden = false;
 }
 
@@ -1286,6 +1308,13 @@ function wireEvents() {
   $("#confSel").addEventListener("change", (e) => {
     state.threshold = e.target.value ? parseFloat(e.target.value) : null;
     if ($("#deckText").value.trim()) analyzeDeck();
+  });
+  // "Preview the cut": re-simulate the draw figures against the leaner build the advice
+  // recommends, without touching the real build. Re-render comes via the next sim pass.
+  $("#pdAdvice").addEventListener("click", (e) => {
+    if (!e.target.closest("#previewCutBtn")) return;
+    state.previewCut = !state.previewCut;
+    scheduleSim();
   });
   $("#searchBox").addEventListener("input", (e) => {
     state.search = e.target.value.toLowerCase().trim();
