@@ -423,9 +423,7 @@ def test_slow_land_is_flagged_untapped_but_slow():
 def test_roads_land_defaults_tapped_with_untap_condition():
     """The 'Roads' cycle ('enters tapped unless you control a Mount or Vehicle') banks
     on a board state most decks never reach, so it defaults to tapped with an
-    `untapWhen` flag the app uses to untap it only for Mount/Vehicle decks. The
-    3-color check-land cycle (off-color basic-type checks) is NOT touched — those decks
-    run the enabling basics, so they stay untapped."""
+    `untapWhen` flag the app uses to untap it only for Mount/Vehicle decks."""
     sys.path.insert(0, os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
     import build_data
@@ -435,8 +433,33 @@ def test_roads_land_defaults_tapped_with_untap_condition():
     })
     assert road["tapped"] is True and road.get("untapWhen") == "mount or vehicle" and road["colors"] == ["R"]
 
-    check = build_data.slim_land({
+
+def test_basic_unless_land_defaults_tapped():
+    """The 'enters tapped unless you control a basic land [type]' cycle (Avatar's
+    village/temple/palace lands) banks on running basics the recommender can't promise,
+    so it defaults to TAPPED with an `untapBasic` flag the simulator uses to untap it
+    in games where a basic is actually in play. Both the 'a basic land' and the
+    specific basic-type ('Island or a Plains') wordings are covered. The colors stay
+    reliable — only the tapped status is conditional."""
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    import build_data
+    any_basic = build_data.slim_land({
+        "name": "Agna Qel'a", "type_line": "Land", "produced_mana": ["U"],
+        "oracle_text": "This land enters tapped unless you control a basic land.\n{T}: Add {U}.",
+    })
+    assert any_basic["tapped"] is True and any_basic.get("untapBasic") is True and any_basic["colors"] == ["U"]
+
+    by_type = build_data.slim_land({
         "name": "Cori Mountain Monastery", "type_line": "Land", "produced_mana": ["R"],
         "oracle_text": "This land enters tapped unless you control an Island or a Plains.\n{T}: Add {R}.",
     })
-    assert check["tapped"] is False and "untapWhen" not in check
+    assert by_type["tapped"] is True and by_type.get("untapBasic") is True and by_type["colors"] == ["R"]
+
+    # Regression: slow ("two or more other lands") and life conditions must NOT be
+    # mistaken for the basic cycle — they keep their own handling.
+    slow = build_data.slim_land({
+        "name": "Sundown Pass", "type_line": "Land", "produced_mana": ["R", "W"],
+        "oracle_text": "This land enters tapped unless you control two or more other lands.\n{T}: Add {R} or {W}.",
+    })
+    assert slow["tapped"] is False and slow.get("slow") is True and "untapBasic" not in slow

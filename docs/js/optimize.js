@@ -468,7 +468,7 @@ export async function battleTested(opts) {
     seen.add(sig);
     const buildLands = Object.keys(rec.counts).map((name) => {
       const l = byName.get(name) || {};
-      return { colors: l.colors || [], tapped: !!l.tapped, basic: !!l.basic, needsBasic: !!l.needsBasic, slow: !!l.slow, count: rec.counts[name] };
+      return { colors: l.colors || [], tapped: !!l.tapped, basic: !!l.basic, needsBasic: !!l.needsBasic, slow: !!l.slow, untapBasic: !!l.untapBasic, count: rec.counts[name] };
     });
     cands.push({ rec, sim: simulate(buildLands, deckSize, trials) });
   }

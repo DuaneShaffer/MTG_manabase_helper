@@ -121,6 +121,19 @@ async function run() {
   ok("untapped objective won't pad with a check land that has no basics to enable it",
     padBastions === 0 || padBasics > 0);
 
+  // --- "Enters tapped unless you control a basic" lands ---------------------
+  // These ship as tapped:true (untapBasic), so the recommender must treat them as
+  // plain taplands — never preferring a free "untapped" basic-unless land over a real
+  // basic. With an untapped basic available, the untapped objective shouldn't reach
+  // for the tapland to cover a color it could cover untapped.
+  const agna = { name: "Agna Qel'a", colors: ["U"], type: "Land", tapped: true, untapBasic: true, basic: false };
+  const islandB = { name: "Island", colors: ["U"], type: "Basic Land — Island", tapped: false, basic: true };
+  const tappedUnless = await optimizeManabase({ requirements: { W: 0, U: 6, B: 0, R: 0, G: 0 },
+    lands: [agna, islandB], landTarget: 12, objective: "untapped" });
+  ok("recommender treats an untapBasic land as a tapland, preferring the untapped basic",
+    tappedUnless.feasible && (tappedUnless.counts["Island"] || 0) > 0
+    && (tappedUnless.counts["Agna Qel'a"] || 0) === 0 && tappedUnless.taplands === 0);
+
   // --- Basic-fetch gating (Demolition Field / Fabled Passage) ---------------
   // A basic-fetch land's payoff is sacrificing to grab a basic, so it's dead with
   // no basics to fetch. Even as a metagame-proven utility land it must not pad a

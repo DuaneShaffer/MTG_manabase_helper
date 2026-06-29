@@ -83,6 +83,25 @@ const ok = (m) => { n++; console.log("ok -", m); };
   ok("slow lands don't penalize a turn-4 spell (>=2 other lands by then)");
 }
 
+// "untapBasic" land (enters tapped unless you control a basic): with no basic in the
+// build every copy is a tapland, so a deck of only these can't cast on curve; adding
+// basics untaps them. The simulator decides this per game off the real board state,
+// which is why the recommender (no board) still treats them as plain taplands.
+{
+  const noBasic = sim([WU2], [{ colors: ["U", "W"], tapped: true, untapBasic: true, count: 24 }]);
+  assert.strictEqual(noBasic.bySpell["WU two-drop"], 0, "untapBasic, no basic -> all tapped -> 0%");
+  ok("untapBasic lands stay tapped with no basic in play");
+
+  const withBasic = sim([WU2], [
+    { colors: ["U", "W"], tapped: true, untapBasic: true, count: 16 },
+    { colors: ["W"], basic: true, tapped: false, count: 4 },
+    { colors: ["U"], basic: true, tapped: false, count: 4 },
+  ]);
+  assert.ok(withBasic.bySpell["WU two-drop"] > 0.3,
+    "a basic in play untaps them: " + withBasic.bySpell["WU two-drop"]);
+  ok("a basic in play untaps the untapBasic lands");
+}
+
 // A numeric `seed` makes a run fully reproducible.
 {
   const opts = { trials: 2000, seed: 99 };

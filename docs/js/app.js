@@ -373,23 +373,33 @@ function refreshBuildList() {
 /* ---------- conditional fixing (Avengers Tower etc.) ---------- */
 function applyConditions(cards, qtyByName) {
   const counts = {};
-  for (const cond of state.conditionsPresent) counts[cond] = 0;
+  const condColorsNeeded = {};   // condition -> colors its matching-type spells demand
+  for (const cond of state.conditionsPresent) { counts[cond] = 0; condColorsNeeded[cond] = new Set(); }
   for (const c of cards) {
     if (isLandType(c.type)) continue;
     const t = (c.type || "").toLowerCase();
     const q = qtyByName[c.name] || 0;
+    const cols = Object.keys(costConstraints(c.cost || ""));  // colored pips this spell needs
     for (const cond of state.conditionsPresent) {
       // a condition like "instant or sorcery" matches a card of either type
-      if (cond.split(" or ").some((p) => t.includes(p))) counts[cond] += q;
+      if (cond.split(" or ").some((p) => t.includes(p))) {
+        counts[cond] += q;
+        for (const col of cols) condColorsNeeded[cond].add(col);
+      }
     }
   }
   state.conditionsActive = new Set(
     [...state.conditionsPresent].filter((cond) => counts[cond] >= COND_THRESHOLD));
-  // Set each conditional land's effective colors and refresh its tile.
+  // Set each conditional land's effective colors and refresh its tile. A conditional
+  // land (Cavern of Souls, Great Hall) only makes colored mana for spells matching its
+  // condition — creatures, or instants & sorceries — so credit its colors only for the
+  // colors those matching-type spells actually demand. Otherwise a creature land in a
+  // W/B/R deck reads as a full rainbow, inventing off-color sources it can never cast.
   for (const land of state.lands) {
     if (!land.condition) continue;
+    const allow = condColorsNeeded[land.condition] || new Set();
     const eff = state.conditionsActive.has(land.condition)
-      ? [...new Set([...land.baseColors, ...(land.condColors || [])])]
+      ? [...new Set([...land.baseColors, ...(land.condColors || []).filter((c) => allow.has(c))])]
       : land.baseColors;
     if ((land.colors || []).join() !== eff.join()) {
       land.colors = eff.slice();
@@ -753,7 +763,7 @@ function doSimulate() {
   const lands = [];
   for (const { land } of state.tiles.values()) {
     const c = state.counts[land.name] || 0;
-    if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, basic: !!land.basic, needsBasic: !!land.needsBasic, slow: !!land.slow, count: c });
+    if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, basic: !!land.basic, needsBasic: !!land.needsBasic, slow: !!land.slow, untapBasic: !!land.untapBasic, count: c });
   }
   // Both cheap smoothers and mid-cost diggers help you find lands in a real game.
   const res = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount: smoothCount() + digCount() });

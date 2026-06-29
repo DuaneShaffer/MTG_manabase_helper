@@ -43,7 +43,7 @@ function shuffle(a, rng) {
 function buildDeck(buildLands, deckSize, drawCount) {
   const deck = [];
   for (const l of buildLands) {
-    for (let i = 0; i < l.count; i++) deck.push({ colors: l.colors, tapped: !!l.tapped, basic: !!l.basic, needsBasic: !!l.needsBasic, slow: !!l.slow });
+    for (let i = 0; i < l.count; i++) deck.push({ colors: l.colors, tapped: !!l.tapped, basic: !!l.basic, needsBasic: !!l.needsBasic, slow: !!l.slow, untapBasic: !!l.untapBasic });
   }
   for (let i = 0; i < drawCount; i++) deck.push("draw");
   for (let i = deck.length; i < deckSize; i++) deck.push(null);
@@ -95,14 +95,17 @@ function canPayColors(pips, landColors) {
 
 function castableOnCurve(lands, pips, mv) {
   if (lands.length < mv) return false;                 // not enough lands (screw)
+  const haveBasic = lands.some((l) => l.basic);
   // A "slow land" enters tapped unless you control two or more OTHER lands, so it's
-  // untapped only once you have >=3 lands total; with <=2 it plays as a tapland.
-  const untapped = (l) => !l.tapped && (!l.slow || lands.length >= 3);
+  // untapped only once you have >=3 lands total; with <=2 it plays as a tapland. An
+  // "untapBasic" land (enters tapped unless you control a basic) is untapped in any
+  // game where a basic is actually on the battlefield — which the recommender can't
+  // promise but the sim can see per game.
+  const untapped = (l) => (!l.tapped || (l.untapBasic && haveBasic)) && (!l.slow || lands.length >= 3);
   if (!lands.some(untapped)) return false;             // only taplands -> a turn slow
   // A "check land" (needsBasic) makes its colors only while you control a basic; with
   // no basic in play it taps for colorless only, so it can't pay a colored pip (though
   // it still counts as a land toward the drop). Any one basic turns them all on.
-  const haveBasic = lands.some((l) => l.basic);
   const colorsOf = (l) => (l.needsBasic && !haveBasic ? [] : l.colors);
   return canPayColors(pips, lands.map(colorsOf));
 }

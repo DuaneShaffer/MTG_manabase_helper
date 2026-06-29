@@ -37,6 +37,32 @@ async function loadCards() {
   return _cards;
 }
 
+// Two-faced cards (transform / modal-DFC / adventure / split / Room) are keyed by
+// their canonical Scryfall name — the full "front // back" string. But Arena/MTGO
+// decklist exports name most of them by the FRONT FACE alone (e.g. "Hearth Elemental"
+// for "Hearth Elemental // Stoke Genius"), and split/Room cards with a single-space
+// slash ("A / B" vs Scryfall's "A // B"). So a deck name can miss an entry that's
+// really present. This front-face index lets resolveLocal recover those without a
+// needless Scryfall round-trip. Front faces are verified distinct across the index
+// and non-colliding with single-faced names, so the mapping is unambiguous.
+let _frontFace = null;
+function frontFaceIndex(cards) {
+  if (_frontFace) return _frontFace;
+  _frontFace = {};
+  for (const key in cards) {
+    const i = key.indexOf(" // ");
+    if (i > 0) _frontFace[key.slice(0, i)] = cards[key];
+  }
+  return _frontFace;
+}
+
+// Look a deck name up in the committed index: exact match, then ` / ` → ` // `
+// normalization (split/Room), then the front-face index (DFCs named by front only).
+function resolveLocal(cards, name) {
+  const n = name.toLowerCase();
+  return cards[n] || cards[n.replace(/ \/ /g, " // ")] || frontFaceIndex(cards)[n] || null;
+}
+
 const SCRYFALL = "https://api.scryfall.com";
 
 function _slimScryfall(c) {
@@ -73,7 +99,7 @@ export async function resolveDeck(names) {
   const resolved = [];
   const localMissing = [];
   for (const n of names) {
-    const c = cards[n.toLowerCase()];
+    const c = resolveLocal(cards, n);
     if (c) resolved.push(c);
     else localMissing.push(n);
   }

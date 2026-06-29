@@ -54,6 +54,15 @@ def _enters_tapped(oracle):
             # despite the "unless" (the Duskmourn cycle: Abandoned Campground, etc.).
             if "unless" in sentence and "less life" in sentence:
                 return True
+            # "Enters tapped unless you control a basic land" / "...a Plains or an
+            # Island": the untap is a board condition the recommender can't promise
+            # (it doesn't know it will run the enabling basics — and tends not to), so
+            # treat these as TAPPED. Otherwise they masquerade as free untapped duals
+            # and the recommender prefers them over real basics. The simulator untaps
+            # them per-game when a basic is actually on the battlefield (see untapBasic).
+            if "unless" in sentence and ("control a basic land" in sentence
+                    or re.search(r"control (?:a|an) (?:plains|island|swamp|mountain|forest)\b", sentence)):
+                return True
             conditional = any(kw in sentence for kw in ("unless", "you may pay", "if you don"))
             return not conditional
     return False
@@ -206,12 +215,20 @@ def slim_land(card):
     # "Roads" cycle: "enters tapped unless you control a Mount or Vehicle" — a board
     # condition most decks never meet, so default to tapped. `untapWhen` lets the app
     # untap it for decks that actually run enough Mounts/Vehicles, the same deck-aware
-    # way conditional-color lands turn on. (Basic-land-type check lands and the life /
-    # land-count / turn conditions are handled by _enters_tapped and aren't touched —
-    # those decks DO run the enabling basics, so they stay untapped.)
+    # way conditional-color lands turn on.
     if "enters tapped unless you control a mount or vehicle" in low:
         out["tapped"] = True
         out["untapWhen"] = "mount or vehicle"
+    # "Enters tapped unless you control a basic land [type]" cycle (Avatar's village /
+    # temple / palace lands). `_enters_tapped` already defaulted these to tapped; tag
+    # them so the simulator can untap them in games where a basic is on the battlefield.
+    # The recommender keeps treating them as taplands — it can't promise the basics,
+    # and crediting untapped-ness for a board state is exactly the optimism the sim
+    # exists to catch.
+    if ("enters tapped unless you control a basic land" in low
+            or re.search(r"enters tapped unless you control (?:a|an) "
+                         r"(?:plains|island|swamp|mountain|forest)", low)):
+        out["untapBasic"] = True
     return out
 
 

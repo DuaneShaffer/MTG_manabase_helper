@@ -129,20 +129,27 @@
             <svg class="axis-ico timing" viewBox="0 0 16 16" role="img"><title>lands on time</title>
               <circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.4"/>
               <path d="M8 8 L8 4.2 M8 8 L10.7 9.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-            <span class="sl-t"><strong>lands on time</strong> — real games, incl. screw &amp; flood</span>
+            <span class="sl-t"><strong>lands on time</strong> — keeps a 2–5 land opening hand</span>
           </span>
         </div>
-        <p class="grade-note" id="gradeNote" hidden>
-          Each card carries two readings, both updating live as you edit the build. The lower pill
-          (marked with a <strong>mana-pie</strong>) is the <strong>colors</strong> reading — a
-          Karsten-style source-count model: the chance the right colors are available by the turn you'd cast the card
-          <em>assuming you hit your land drops</em>. It tops out at 99% and isolates color quality
-          from everything else. The pill above it (marked with a <strong>clock</strong>) is the
-          <strong>lands-on-time</strong> reading — it plays out thousands of real games (shuffle,
-          mulligan, draw) and reports true on-curve castability <em>including mana screw and
-          flood</em>. Read them together: if the mana-pie is high but the clock is low, your colors
-          are fine and you're screwing or flooding — adjust the land <em>count</em>, not the fixing.
-        </p>
+        <div class="grade-note" id="gradeNote" hidden>
+          <div class="gn-row">
+            <span class="axis-ico colors"></span>
+            <p><strong>Colors</strong> — are the right colors available by the turn you'd cast this,
+              <em>assuming you hit your land drops</em>? A Karsten source count that isolates color
+              quality; caps at 99%.</p>
+          </div>
+          <div class="gn-div"></div>
+          <div class="gn-row">
+            <svg class="axis-ico timing" viewBox="0 0 16 16" role="img"><title>lands on time</title>
+              <circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+              <path d="M8 8 L8 4.2 M8 8 L10.7 9.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            <p><strong>Lands on time</strong> — thousands of simulated games (shuffle, mulligan to a
+              2–5 land hand, draw) for true on-curve castability, screw and flood included.</p>
+          </div>
+          <p class="gn-tip">Colors high but lands-on-time low? You're screwing or flooding — change
+            the land <em>count</em>, not the fixing.</p>
+        </div>
         <div class="spell-grid" id="spellGrid"></div>
       </section>
 

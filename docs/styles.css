@@ -190,6 +190,13 @@ section.deck-input, section.dashboard, section.tools {
 }
 .grade-note[hidden] { display: none; }
 .grade-note strong { color: var(--parchment); font-weight: 600; }
+/* two icon-led readings, split by a hairline; a closing tip on how to read them together */
+.grade-note .gn-row { display: flex; gap: 9px; align-items: flex-start; }
+.grade-note .gn-row .axis-ico { flex: none; margin-top: 3px; }
+.grade-note .gn-row p { margin: 0; }
+.grade-note .gn-div { height: 1px; background: var(--line); margin: 10px 0; }
+.grade-note .gn-tip { margin: 11px 0 0; padding-top: 10px; border-top: 1px solid var(--line); }
+.grade-note .gn-tip em { color: var(--parchment); font-style: normal; font-weight: 600; }
 
 /* always-on key for the two per-card readings (colors pie · lands-on-time clock) */
 .strip-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 14px; }
