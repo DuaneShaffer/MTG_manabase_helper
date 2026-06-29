@@ -491,6 +491,12 @@ def test_smooths_ignores_board_triggered_card_selection():
               "When this creature enters, draw a card."}) is True
     assert s({"cmc": 2, "type_line": "Artifact", "oracle_text":
               "When this artifact enters or leaves the battlefield, draw a card."}) is True
+    # A literal "{T}:" activated ability that draws/loots IS on-demand smoothing (you
+    # tap it on your own terms) — unlike Gran-Gran's *triggered* "becomes tapped".
+    assert s({"cmc": 2, "type_line": "Creature", "oracle_text": "{T}: Draw a card."}) is True
+    assert s({"cmc": 2, "type_line": "Creature", "oracle_text":
+              "{1}, {T}: Draw a card, then discard a card."}) is True
+
     # Ramp / land fetch unaffected.
     assert s({"cmc": 1, "type_line": "Creature — Elf Druid", "produced_mana": ["G"],
               "oracle_text": "{T}: Add {G}."}) is True

@@ -249,25 +249,31 @@ def _smooths(card):
         return True  # mana dork / rock
     if "search your library for" in oracle and "land" in oracle:
         return True  # cheap land ramp / fetch
-    # Card draw / selection only smooths your early game if you get it from CASTING the
-    # card — a cantrip, an ETB, or an always-on ability — not from a board-dependent
-    # trigger you have to earn first. A draw gated behind attacking, tapping, dealing
-    # combat damage, dying, or blocking isn't reliable early smoothing (and is often a
-    # card-neutral loot), so it shouldn't trim the land count. Scope the signal to its
-    # own sentence so a gated trigger doesn't disqualify a real cantrip elsewhere on the
-    # card. E.g. Gran-Gran ("Whenever Gran-Gran becomes tapped, draw a card, then
-    # discard a card") is gated on tapping → not a smoother.
+    # Card draw / selection only smooths your early game if you get it on demand — from
+    # casting the card (a cantrip or ETB), a static ability, or an activated ability you
+    # choose to use (including a literal "{T}:" tap ability) — not from a board-dependent
+    # trigger you have to earn first. A draw gated behind ATTACKING, BECOMING TAPPED (by
+    # attacking/convoke/etc.), dealing combat damage, dying, or blocking isn't reliable
+    # early smoothing (and is often a card-neutral loot), so it shouldn't trim the land
+    # count. Scope the signal to its own sentence so a gated trigger doesn't disqualify a
+    # real cantrip elsewhere on the card.
+    #   e.g. Gran-Gran ("Whenever Gran-Gran becomes tapped, draw a card, then discard a
+    #        card") is gated on tapping → NOT a smoother;
+    #   but a "{T}: Draw a card" activated ability you tap on your own terms → IS one.
     SIGNALS = ("draw", "scry", "surveil", "look at the top", "into your hand")
     GATES = ("becomes tapped", "attacks", "you attack", "deals combat damage",
              "dies", "blocks")
     for sentence in re.split(r"[.\n]", oracle):
         if not any(s in sentence for s in SIGNALS):
             continue
-        if "enters" in sentence:                       # draws on ETB -> real cast-time smoothing
-            return True                                # (even if it also triggers on leaving/dying)
+        # An activated tap ability ("{t}:" cost) or an ETB draw is on-demand smoothing,
+        # so it counts even if the sentence also mentions a gate word (e.g. "enters or
+        # dies"). A triggered "becomes tapped" carries no "{t}" cost, so it stays gated.
+        if "{t}" in sentence or "enters" in sentence:
+            return True
         if any(g in sentence for g in GATES):          # otherwise gated behind a board trigger
             continue                                   # -> not reliable early smoothing
-        return True                                    # cantrip / static / activated draw
+        return True                                    # cantrip / static / non-tap activated draw
     return False
 
 
