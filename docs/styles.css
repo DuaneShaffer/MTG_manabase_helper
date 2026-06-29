@@ -536,8 +536,11 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 /* first row in the left "Your manabase" panel — no divider above it */
 .total-row--first { margin-top: 4px; padding-top: 0; border-top: none; }
 
-/* horizontal mana-sources strip under the deck */
-.mana-bar { margin-bottom: 20px; }
+/* mana-sources strip — a sub-section at the foot of the deck block, set off from the
+   card grid by a hairline (no longer its own panel) */
+.mana-bar { margin: 16px 0 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.mana-bar h2 { font-size: 11px; letter-spacing: .2em; text-transform: uppercase;
+  color: var(--ink-dim); margin: 0 0 12px; display: block; }
 .mana-bar .dash-empty { margin-bottom: 0; }
 .mana-bar .colors:empty { display: none; }
 .total-num { font-family: var(--font-display); font-size: 24px; color: var(--gold-soft); font-variant-numeric: tabular-nums; }
