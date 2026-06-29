@@ -1030,6 +1030,27 @@ async function computeAllRecs() {
   }
 }
 
+// Plain-English "how this build was chosen" — shown on hover so the option labels
+// can stay short. Battle-tested is the sim-in-the-loop pick; the rest each solve one
+// abstract goal (and say so, so nobody mistakes a source-count proxy for simulated play).
+function recOptionTip(opt) {
+  const t = state.landTarget || "your recommended count";
+  if (opt.sim) {
+    return `Chosen by simulation, not a rule of thumb. We build candidates at a few land counts `
+      + `around the recommended ${t}, then play each out over thousands of games — real shuffles, `
+      + `London mulligans and mana screw included — and keep the count and shape that casts your `
+      + `curve on time most often (with a small penalty for running extra lands you'd flood on). `
+      + `${pct(opt.sim.overall)} is that simulated on-curve rate.`;
+  }
+  switch (opt.rec.objective) {
+    case "untapped": return `Solved to maximize colored sources that enter untapped, at ~${t} lands. `
+      + `Fast, but it optimizes source counts rather than simulated games.`;
+    case "taplands": return `Solved to use as few tapped lands as possible, at ~${t} lands.`;
+    case "lands":    return `Solved to cover your colors with as few lands as possible (no more than ~${t}).`;
+    default:         return "A best-effort base when no option fully covers your colors at this count.";
+  }
+}
+
 // Render the selectable list of computed options (name + headline stats).
 function renderRecOptions(options) {
   const wrap = $("#recOptions");
@@ -1037,6 +1058,7 @@ function renderRecOptions(options) {
   options.forEach((opt, i) => {
     const btn = el("button", "rec-option");
     btn.dataset.i = i;
+    btn.title = recOptionTip(opt);   // hover: how this build was chosen
     // Battle-tested carries its simulated on-curve castability and a "simulated"
     // badge; the ILP options show the land-count / tapped tradeoff they optimize for.
     const stat = opt.sim
