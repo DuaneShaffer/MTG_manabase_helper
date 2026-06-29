@@ -111,10 +111,13 @@ body {
 .grid-controls select { cursor: pointer; }
 
 .export-text {
-  width: calc(100% - 40px); min-height: 280px; resize: vertical; margin: 0 20px 18px;
+  width: calc(100% - 40px); min-height: 220px; resize: vertical; margin: 0 20px 14px;
   background: var(--surface-2); color: var(--parchment); border: 1px solid var(--line);
   border-radius: var(--radius-sm); padding: 12px; font-family: ui-monospace, monospace; font-size: 13px;
 }
+.export-actions { display: flex; gap: 10px; padding: 0 20px; flex-wrap: wrap; }
+.export-actions .btn { flex: 1; min-width: 150px; }
+.export-note { color: var(--ink-dim); font-size: 12px; line-height: 1.5; padding: 10px 20px 18px; margin: 0; }
 
 /* ---------- layout ---------- */
 .layout {
@@ -322,6 +325,37 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 }
 .dig-tag:hover { transform: scale(1.12); box-shadow: 0 0 10px 1px rgba(236,226,204,.4); }
 
+/* cost-override tag (top-right, left of any draw/ramp tag) — quiet until hover,
+   but always shown when an override is active so a non-printed cost is visible. */
+.cost-tag {
+  position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; line-height: 1; cursor: pointer;
+  background: rgba(20,17,14,.9); color: var(--ink-dim); border: 1px solid var(--line);
+  opacity: 0; transition: transform .1s, box-shadow .12s, opacity .12s;
+}
+.spell:hover .cost-tag, .spell:focus-within .cost-tag { opacity: 1; }
+.cost-tag:hover { transform: scale(1.12); box-shadow: 0 0 10px 1px rgba(236,226,204,.35); color: var(--parchment); }
+/* shift left of the draw/ramp tag when one is present so they don't overlap */
+.spell:has(.smooth-tag) .cost-tag, .spell:has(.dig-tag) .cost-tag { right: 30px; }
+/* an active override: keep the tag lit and ring the cell in gold */
+.spell[data-cost-override] .cost-tag { opacity: 1; color: var(--gold-soft); border-color: var(--gold); }
+.spell[data-cost-override] { outline: 1px dashed var(--gold); outline-offset: -1px; }
+
+/* cost-override popover (extends .smooth-pop) */
+.cost-pop { width: 248px; }
+.cost-pop .cp-row { display: flex; flex-direction: column; gap: 5px; }
+.cost-pop .cp-row label { color: var(--ink-dim); }
+.cost-pop .cp-input {
+  font-family: var(--font-ui); font-size: 13px; padding: 6px 8px; color: var(--parchment);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);
+}
+.cost-pop .cp-input:focus { outline: none; border-color: var(--gold); }
+.cost-pop .cp-preview { margin-top: 7px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.cost-pop .cp-preview[data-warn="1"] { color: var(--grade-D); }
+.cost-pop .cp-actions { display: flex; gap: 8px; margin-top: 9px; }
+.cost-pop .cp-apply { border-color: var(--gold); color: var(--gold-soft); }
+.cost-pop .sp-of code { font-family: var(--font-ui); background: var(--surface-2); padding: 0 3px; border-radius: 3px; }
+
 /* recommended-land-count row in the panel */
 .rec-target-row { display: flex; justify-content: space-between; align-items: center;
   margin-top: 8px; font-size: 13px; color: var(--ink-dim); letter-spacing: .04em; }
@@ -353,6 +387,30 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 .build-row:hover .b-step, .build-row:focus-within .b-step { opacity: 1; }
 .build-row .b-mini { width: 22px; height: 22px; font-size: 14px; background: var(--surface-2); border: 1px solid var(--line); }
 .build-empty { font-size: 12px; color: var(--ink-dim); line-height: 1.5; padding: 2px 0; }
+
+/* ---------- draw-odds query tool ---------- */
+.draw-tool { margin-top: 16px; }
+.draw-controls { display: flex; flex-direction: column; gap: 9px; margin-top: 6px; }
+.dt-row, .dt-customs { display: flex; gap: 8px; }
+.dt-field { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.dt-field > span { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-dim); }
+.dt-field select, .dt-field input {
+  font-family: var(--font-ui); font-size: 13px; padding: 5px 7px; color: var(--parchment);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); width: 100%;
+}
+.dt-field select:focus, .dt-field input:focus { outline: none; border-color: var(--gold); }
+.dt-readout { font-size: 13px; color: var(--ink); line-height: 1.5; margin: 11px 0 4px; }
+.dt-readout strong { font-family: var(--font-display); color: var(--gold-soft); font-size: 16px; font-variant-numeric: tabular-nums; }
+.dt-readout .dt-name { color: var(--parchment); }
+.dt-readout .dt-sub { color: var(--ink-dim); }
+.draw-chart { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.dt-bar-row { display: flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; }
+.dt-bar-t { font-size: 10.5px; color: var(--ink-dim); min-width: 20px; }
+.dt-bar { flex: 1; height: 7px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.dt-bar-fill { display: block; height: 100%; background: var(--guide); opacity: .55; border-radius: 4px; }
+.dt-bar-p { font-size: 10.5px; color: var(--ink-dim); min-width: 30px; text-align: right; }
+.dt-bar-row.on .dt-bar-fill { opacity: 1; background: var(--gold-soft); }
+.dt-bar-row.on .dt-bar-t, .dt-bar-row.on .dt-bar-p { color: var(--parchment); }
 
 /* tweak popover for draw/ramp cards */
 .smooth-pop {

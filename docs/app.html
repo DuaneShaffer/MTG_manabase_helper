@@ -109,6 +109,35 @@
           </div>
         </div>
       </section>
+
+      <!-- Open-ended draw-odds calculator on the hypergeometric engine: odds of
+           drawing at least N copies of a card (or custom numbers) by a turn. -->
+      <section class="dashboard draw-tool" id="drawTool">
+        <h2>Draw odds
+          <button class="info-dot" id="drawInfo" aria-label="How draw odds are computed" aria-expanded="false">i</button>
+        </h2>
+        <p class="why-note" id="drawInfoNote" hidden>The chance of drawing at least N copies of a card by a given turn,
+          from the plain hypergeometric distribution. Pick a card from your deck, or choose “Custom numbers” to enter your own.</p>
+        <div class="draw-controls">
+          <label class="dt-field dt-card">
+            <span>Card</span>
+            <select id="drawCardSel"><option value="__custom__">Custom numbers…</option></select>
+          </label>
+          <div class="dt-customs" id="drawCustoms" hidden>
+            <label class="dt-field"><span>In deck</span><input type="number" id="drawPop" min="1" value="60"></label>
+            <label class="dt-field"><span>Copies</span><input type="number" id="drawSucc" min="0" value="4"></label>
+          </div>
+          <div class="dt-row">
+            <label class="dt-field"><span>At least</span><input type="number" id="drawN" min="1" value="1"></label>
+            <label class="dt-field"><span>By turn</span><input type="number" id="drawTurn" min="1" max="15" value="2"></label>
+            <label class="dt-field"><span>On the</span>
+              <select id="drawPlay"><option value="play">play</option><option value="draw">draw</option></select>
+            </label>
+          </div>
+        </div>
+        <p class="dt-readout" id="drawReadout"></p>
+        <div class="draw-chart" id="drawChart" aria-hidden="true"></div>
+      </section>
     </aside>
 
     <section class="grid-wrap">
@@ -216,11 +245,16 @@
   <div class="drawer" id="exportModal" role="dialog" aria-modal="true" aria-labelledby="exportTitle" hidden>
     <div class="drawer-card">
       <div class="drawer-head">
-        <h2 id="exportTitle">Export decklist</h2>
+        <h2 id="exportTitle">Export</h2>
         <button class="icon-btn" id="exportClose" aria-label="Close">×</button>
       </div>
       <p class="drawer-sub" id="exportCopied"></p>
       <textarea id="exportText" class="export-text" spellcheck="false" readonly></textarea>
+      <div class="export-actions">
+        <button class="btn btn-ghost" id="shareLinkBtn" type="button">Copy share link</button>
+        <button class="btn btn-ghost" id="exportJsonBtn" type="button">Download analysis (JSON)</button>
+      </div>
+      <p class="export-note">The decklist above pastes into Arena/MTGO. The share link reopens this exact deck and build; the JSON captures requirements, grades and the simulated odds.</p>
     </div>
   </div>
 
@@ -239,6 +273,22 @@
       </div>
     </div>
     <div class="sp-of" id="smoothOf"></div>
+  </div>
+
+  <!-- Cost-override popover: cast a card at the cost you'll actually pay -->
+  <div class="smooth-pop cost-pop" id="costPop" hidden>
+    <div class="sp-title" id="costPopTitle"></div>
+    <div class="cp-row">
+      <label id="costPopLabel" for="costPopInput">Cost you'll actually pay</label>
+      <input type="text" id="costPopInput" class="cp-input" spellcheck="false"
+        autocomplete="off" placeholder="e.g. {1}{R} or {R}" aria-describedby="costPopPreview">
+    </div>
+    <div class="cp-preview" id="costPopPreview"></div>
+    <div class="cp-actions">
+      <button class="pa-btn" id="costPopReset" type="button">Reset to printed</button>
+      <button class="pa-btn cp-apply" id="costPopApply" type="button">Apply</button>
+    </div>
+    <div class="sp-of">Overrides the printed cost for requirements, grades, the curve and the recommended land count. Use Scryfall braces: <code>{2}{W}{W}</code>.</div>
   </div>
 
   <script type="module" src="js/app.js"></script>

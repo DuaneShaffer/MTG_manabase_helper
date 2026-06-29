@@ -102,6 +102,20 @@ const ok = (m) => { n++; console.log("ok -", m); };
   ok("a basic in play untaps the untapBasic lands");
 }
 
+// Two-color hybrid pip: payable by EITHER color, so a {W/U} hybrid two-drop casts
+// fine off an all-white manabase — unlike a true gold WU card, which can't (above).
+{
+  const HYB = { name: "W/U hybrid two-drop", pips: {}, hybrids: [["W", "U"]], mv: 2 };
+  const r = sim([HYB], [{ colors: ["W"], tapped: false, count: 24 }]);
+  assert.ok(r.bySpell["W/U hybrid two-drop"] > 0.8,
+    "hybrid pays off either color: " + r.bySpell["W/U hybrid two-drop"]);
+  ok("a two-color hybrid pip casts off a single matching color");
+  // And it still needs SOME matching color: an all-green base can't pay {W/U}.
+  const off = sim([HYB], [{ colors: ["G"], tapped: false, count: 24 }]);
+  assert.strictEqual(off.bySpell["W/U hybrid two-drop"], 0, "no W or U source -> 0%");
+  ok("a hybrid still needs at least one of its two colors");
+}
+
 // On the draw (onPlay:false) you see one extra card by each cast turn, so castability
 // can only rise — and on higher curves it rises a lot. This invariant underpins the
 // play/draw toggle and the "cut a land on the draw" sideboard guidance.
@@ -147,6 +161,50 @@ const ok = (m) => { n++; console.log("ok -", m); };
   assert.ok(variance(diffCRN) < variance(diffShared),
     `per-trial CRN variance ${variance(diffCRN).toExponential(2)} should beat shared-stream ${variance(diffShared).toExponential(2)}`);
   ok("per-trial common random numbers lower the build-vs-build comparison variance");
+}
+
+// Fetch/ramp color intelligence: a WU two-drop on an all-white base can't pay U
+// (0% above) — but give the deck a fetch token plus some blue sources and the sim
+// resolves the fetch to the blue it needs, lifting castability above 0.
+{
+  const base = [
+    { colors: ["W"], tapped: false, count: 17 },
+    { colors: ["U"], tapped: false, count: 5 },
+  ];
+  const noFetch = sim([WU2], base, { drawCount: 0, fetchCount: 0 });
+  const withFetch = sim([WU2], base, { drawCount: 6, fetchCount: 6 });
+  assert.ok(withFetch.bySpell["WU two-drop"] > noFetch.bySpell["WU two-drop"],
+    `fetch lifts the scarce color: ${withFetch.bySpell["WU two-drop"]} vs ${noFetch.bySpell["WU two-drop"]}`);
+  ok("fetch tokens resolve to the scarce needed color");
+  // A plain dig (drawCount with no fetches) only finds lands, so it can't conjure
+  // the missing blue the way a color-choosing fetch can.
+  const withDig = sim([WU2], base, { drawCount: 6, fetchCount: 0 });
+  assert.ok(withFetch.bySpell["WU two-drop"] >= withDig.bySpell["WU two-drop"],
+    `fetch (color-choosing) >= plain dig: ${withFetch.bySpell["WU two-drop"]} vs ${withDig.bySpell["WU two-drop"]}`);
+  ok("a color-choosing fetch beats (or matches) a generic dig for fixing");
+}
+
+// Keep-rate / mulligan-rate accounting: rates are well-formed, and a land-light
+// build mulligans more often than a healthy one.
+{
+  const healthy = sim([W4], [{ colors: ["W"], tapped: false, count: 24 }]);
+  const sum = healthy.keepRates[7] + healthy.keepRates[6] + healthy.keepRates[5] + healthy.keepRates[4];
+  assert.ok(Math.abs(sum - 1) < 1e-9, "keepRates sum to 1: " + sum);
+  assert.ok(healthy.mulliganRate >= 0 && healthy.mulliganRate <= 1, "mulliganRate in [0,1]");
+  const lean = sim([W4], [{ colors: ["W"], tapped: false, count: 12 }]);
+  assert.ok(lean.mulliganRate > healthy.mulliganRate,
+    `land-light mulligans more: ${lean.mulliganRate} vs ${healthy.mulliganRate}`);
+  ok("keep-rate / mulligan-rate accounting is well-formed and screw-sensitive");
+}
+
+// Average delay: a screw-prone 4-drop on few lands comes online later (bigger delay)
+// than the same card on a healthy base, where it's usually on curve (delay ~0).
+{
+  const few = sim([W4], [{ colors: ["W"], tapped: false, count: 14 }]);
+  const many = sim([W4], [{ colors: ["W"], tapped: false, count: 25 }]);
+  assert.ok(few.delayBySpell["W four-drop"] > many.delayBySpell["W four-drop"],
+    `more screw -> more delay: ${few.delayBySpell["W four-drop"]} vs ${many.delayBySpell["W four-drop"]}`);
+  ok("average delay grows when the build is screw-prone");
 }
 
 console.log(`\n${n} montecarlo tests passed`);

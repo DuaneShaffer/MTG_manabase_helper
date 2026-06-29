@@ -34,6 +34,36 @@ def cards_seen(turn, on_play=True):
     return 7 + (turn - 1) if on_play else 7 + turn
 
 
+@lru_cache(maxsize=None)
+def hypergeom_at_least(population, successes, sample, k):
+    """P(draw >= k successes) for a sample of ``sample`` from ``population``.
+
+    Plain (unconditional) hypergeometric: X ~ Hypergeometric(N=population,
+    K=successes, n=sample). Used by the open-ended "odds of drawing N copies by
+    turn T" tool, distinct from the conditional castability model above.
+    """
+    if k <= 0:
+        return 1.0
+    sample = min(sample, population)
+    if k > successes or k > sample:
+        return 0.0
+    denom = math.comb(population, sample)
+    if denom == 0:
+        return 0.0
+    lo = max(k, sample - (population - successes))
+    hi = min(successes, sample)
+    numer = sum(
+        math.comb(successes, x) * math.comb(population - successes, sample - x)
+        for x in range(lo, hi + 1)
+    )
+    return numer / denom
+
+
+def draw_odds_by_turn(deck_size, successes, k, turn, on_play=True):
+    """P(>= k of ``successes`` copies seen by ``turn``), on the play or draw."""
+    return hypergeom_at_least(deck_size, successes, cards_seen(turn, on_play), k)
+
+
 def threshold_for(mana_value):
     """Karsten's sliding confidence target: (89 + M)%, clamped."""
     return min((89 + mana_value) / 100.0, THRESHOLD_CAP)

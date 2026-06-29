@@ -1,7 +1,7 @@
 import { COLORS, COLOR_NAMES } from "./colors.js";
-import { costConstraints, manaValue } from "./mana.js";
+import { costConstraints, manaValue, parseCost } from "./mana.js";
 import { requirementsForCards } from "./requirements.js";
-import { castableProbability, multivariateCastable, grade } from "./hypergeometric.js";
+import { castableProbability, multivariateCastable, grade, drawOddsByTurn } from "./hypergeometric.js";
 import { recommend as recommendManabase, recommendLandCount } from "./recommend.js";
 import { optimizeManabase, battleTested, OBJECTIVES, setLandPopularity } from "./optimize.js";
 import { manabaseAdvice } from "./advice.js";
@@ -37,6 +37,9 @@ const state = {
   smoothOverrides: {}, // name -> copies counted toward the land target & sim
   digCards: [],        // [{name, qty}] mid-cost (3 MV) card advantage — helps the sim, NOT the land count
   digOverrides: {},    // name -> copies counted toward the sim
+  costOverrides: {},   // name -> mana-cost STRING to use instead of the printed cost (kicker/X/free spells)
+  resolvedCards: [],   // last analyzed deck's resolved Scryfall cards (for cost-override recompute)
+  qtyByName: {},       // name -> copies in the analyzed deck
   conditionsPresent: new Set(),  // condition keywords across the land pool
   conditionsActive: new Set(),   // conditions the loaded deck satisfies
 };
@@ -54,6 +57,15 @@ function smoothCount() {
 function digCount() {
   return state.digCards.reduce(
     (s, c) => s + (state.digOverrides[c.name] ?? c.qty), 0);
+}
+// Of the counted draw/ramp cards, how many are land-fetchers (Cultivate, land
+// tutors). The sim resolves these to the scarcest needed color rather than a
+// generic dig. Respects the same per-card override counts as smoothCount/digCount.
+function fetchCount() {
+  let n = 0;
+  for (const c of state.smoothCards) if (c.fetch) n += (state.smoothOverrides[c.name] ?? c.qty);
+  for (const c of state.digCards) if (c.fetch) n += (state.digOverrides[c.name] ?? c.qty);
+  return n;
 }
 
 const $ = (s) => document.querySelector(s);
@@ -482,6 +494,56 @@ function changeSmooth(delta) {
   }
 }
 
+/* ---------- cost-override popover ---------- */
+let _costPopCard = null;
+function openCostPop(spell, anchorEl) {
+  // The resolved card carries the printed cost; spell.name keys the override.
+  _costPopCard = (state.resolvedCards || []).find((c) => c.name === spell.name) || { name: spell.name, cost: "" };
+  const pop = $("#costPop");
+  $("#costPopTitle").textContent = spell.name;
+  const input = $("#costPopInput");
+  input.value = state.costOverrides[spell.name] ?? "";
+  input.placeholder = _costPopCard.cost || "{1}{R}";
+  renderCostPreview();
+  const r = anchorEl.getBoundingClientRect();
+  pop.style.left = Math.min(window.innerWidth - 244, Math.max(6, r.left - 110)) + "px";
+  pop.style.top = (r.bottom + 6) + "px";
+  pop.hidden = false;
+  input.focus();
+  input.select();
+}
+// Live preview of what the entered cost parses to (MV + colored pips), so a typo
+// is obvious before you apply it.
+function renderCostPreview() {
+  const raw = $("#costPopInput").value.trim();
+  const box = $("#costPopPreview");
+  const printed = _costPopCard?.cost || "";
+  const cost = raw || printed;
+  if (!cost) { box.textContent = "Printed cost unknown — enter one to override."; box.dataset.warn = "1"; return; }
+  const mv = manaValue(cost);
+  const { colored, hybrid } = parseCost(cost);
+  const pips = [];
+  for (const c of COLORS) for (let i = 0; i < colored[c]; i++) pips.push(c);
+  for (const pair of hybrid) pips.push(pair.join("/"));
+  const sym = pips.length ? pips.map((p) => `{${p}}`).join("") : "no colored pips";
+  box.dataset.warn = "";
+  box.textContent = `${raw ? "Override" : "Printed"}: MV ${mv} · ${sym}`;
+}
+function applyCostPop() {
+  if (!_costPopCard) return;
+  const raw = $("#costPopInput").value.trim();
+  if (raw) state.costOverrides[_costPopCard.name] = raw;
+  else delete state.costOverrides[_costPopCard.name];
+  $("#costPop").hidden = true;
+  recomputeFromCosts();
+}
+function resetCostPop() {
+  if (!_costPopCard) return;
+  delete state.costOverrides[_costPopCard.name];
+  $("#costPop").hidden = true;
+  recomputeFromCosts();
+}
+
 /* ---------- floating card preview ---------- */
 function showPreview(src, x, y) {
   if (!src) return;
@@ -517,6 +579,91 @@ function closeDrawer(drawerEl) {
   _drawerOpener = null;
 }
 
+/* ---------- cost overrides (kicker / X / free spells) ---------- */
+// The mana cost to analyze a card by: a user override if set, else the printed cost.
+function effectiveCost(card) {
+  const o = state.costOverrides[card.name];
+  return o != null ? o : card.cost;
+}
+
+// Recompute everything cost-derived (requirements, per-card spells, the curve,
+// color demand, draw/ramp split, land target) from the last resolved deck. Called
+// on analyze and again whenever a cost override changes — no Scryfall re-fetch.
+function rebuildFromCosts() {
+  const cards = state.resolvedCards || [];
+  const qtyByName = state.qtyByName || {};
+  state.requirements = requirementsForCards(
+    cards.map((c) => ({ cost: effectiveCost(c) })), state.deckSize, state.threshold);
+
+  state.spells = [];
+  state.deckCards = [];
+  for (const c of cards) {
+    const cost = effectiveCost(c);
+    const mv = manaValue(cost);
+    if (!isLandType(c.type)) state.deckCards.push({ name: c.name, mv });  // transform DFCs are spells on the curve
+    const cons = costConstraints(cost);
+    const cols = Object.keys(cons);
+    const { hybrid } = parseCost(cost);
+    if (cols.length || hybrid.length) {
+      const pips = {};
+      for (const col of cols) pips[col] = cons[col].pips;
+      const cheap = !!c.smooth && mv <= SMOOTH_MAX_MV;  // smooths early drops -> trims lands
+      const dig = !!c.smooth && mv > SMOOTH_MAX_MV;     // 3 MV card advantage -> helps the top end
+      // gold = needs >1 distinct color in the worst case (hard colors, plus a
+      // hybrid whose colors don't overlap the hard ones); hybrids are resolved
+      // to a concrete color at grade time against the live source counts.
+      const gold = cols.length > 1 || (cols.length >= 1 && hybrid.length > 0) || hybrid.length > 1;
+      state.spells.push({ name: c.name, image: c.image, qty: qtyByName[c.name] || 1, mv, gold, pips, hybrids: hybrid, smooth: cheap, dig });
+    }
+  }
+  state.avgMV = state.deckCards.length
+    ? state.deckCards.reduce((s, c) => s + c.mv, 0) / state.deckCards.length : 3;
+
+  // How much the deck leans on each color (total colored pips) and the card
+  // setting each color's requirement — feeds the recommender's shortfall
+  // weighting and the actionable advice when a color can't be fully covered.
+  state.demand = {}; state.colorInfo = {};
+  for (const col of COLORS) { state.demand[col] = 0; state.colorInfo[col] = { cards: 0, driver: null }; }
+  for (const sp of state.spells) {
+    for (const col of Object.keys(sp.pips)) {
+      const pips = sp.pips[col];
+      state.demand[col] += pips * sp.qty;
+      state.colorInfo[col].cards += sp.qty;
+      const d = state.colorInfo[col].driver;
+      if (!d || pips > d.pips || (pips === d.pips && sp.qty > d.qty)) {
+        state.colorInfo[col].driver = { name: sp.name, pips, qty: sp.qty };
+      }
+    }
+  }
+
+  // Split draw/ramp by mana value: cheap (<=2 MV) smooths early drops and trims
+  // the land target; mid-cost (3 MV) is card advantage that only helps the sim.
+  const drawRamp = cards.filter((c) => c.smooth && !isLandType(c.type));
+  state.smoothCards = drawRamp
+    .filter((c) => manaValue(effectiveCost(c)) <= SMOOTH_MAX_MV)
+    .map((c) => ({ name: c.name, qty: qtyByName[c.name] || 0, fetch: !!c.fetch }));
+  state.digCards = drawRamp
+    .filter((c) => manaValue(effectiveCost(c)) > SMOOTH_MAX_MV)
+    .map((c) => ({ name: c.name, qty: qtyByName[c.name] || 0, fetch: !!c.fetch }));
+
+  // Conditional fixing: turn on lands whose spell-type condition the deck meets.
+  applyConditions(cards, qtyByName);
+
+  state.landTarget = recommendLandCount(state.avgMV, state.deckSize, smoothCount());
+}
+
+// Re-run the cost-derived build after an override edit and refresh every view that
+// reads it. The land build (state.counts) is untouched.
+function recomputeFromCosts() {
+  rebuildFromCosts();
+  refreshDashboard();
+  renderSpellStrip();
+  markFixers();
+  if (deckColors().size) { state.suggestedLands = null; computeSuggested(); }
+  updateLandPanel();
+  gradeBuild();
+}
+
 /* ---------- deck analysis (all local) ---------- */
 async function analyzeDeck() {
   const text = $("#deckText").value.trim();
@@ -532,61 +679,15 @@ async function analyzeDeck() {
     const { cards, missing } = await resolveDeck(names);
 
     state.deckSize = deckSize || 60;
-    state.requirements = requirementsForCards(cards.map((c) => ({ cost: c.cost })), state.deckSize, state.threshold);
-
-    state.spells = [];
-    state.deckCards = [];
-    for (const c of cards) {
-      const mv = manaValue(c.cost);
-      if (!isLandType(c.type)) state.deckCards.push({ name: c.name, mv });  // transform DFCs are spells on the curve
-      const cons = costConstraints(c.cost);
-      const cols = Object.keys(cons);
-      if (cols.length) {
-        const pips = {};
-        for (const col of cols) pips[col] = cons[col].pips;
-        const cheap = !!c.smooth && mv <= SMOOTH_MAX_MV;  // smooths early drops -> trims lands
-        const dig = !!c.smooth && mv > SMOOTH_MAX_MV;     // 3 MV card advantage -> helps the top end
-        state.spells.push({ name: c.name, image: c.image, qty: qtyByName[c.name] || 1, mv, gold: cols.length > 1, pips, smooth: cheap, dig });
-      }
-    }
-    const avg = state.deckCards.length
-      ? state.deckCards.reduce((s, c) => s + c.mv, 0) / state.deckCards.length : 3;
-    state.avgMV = avg;
-
-    // How much the deck leans on each color (total colored pips) and the card
-    // setting each color's requirement — feeds the recommender's shortfall
-    // weighting and the actionable advice when a color can't be fully covered.
-    state.demand = {}; state.colorInfo = {};
-    for (const col of COLORS) { state.demand[col] = 0; state.colorInfo[col] = { cards: 0, driver: null }; }
-    for (const sp of state.spells) {
-      for (const col of Object.keys(sp.pips)) {
-        const pips = sp.pips[col];
-        state.demand[col] += pips * sp.qty;
-        state.colorInfo[col].cards += sp.qty;
-        const d = state.colorInfo[col].driver;
-        if (!d || pips > d.pips || (pips === d.pips && sp.qty > d.qty)) {
-          state.colorInfo[col].driver = { name: sp.name, pips, qty: sp.qty };
-        }
-      }
-    }
     const newDeck = text !== state.lastImportedDeck;
+    // Reset per-card overrides on a new deck (so a previous deck's tweaks don't leak).
+    if (newDeck) { state.smoothOverrides = {}; state.digOverrides = {}; state.costOverrides = {}; }
 
-    // Split draw/ramp by mana value: cheap (<=2 MV) smooths early drops and trims
-    // the land target; mid-cost (3 MV) is card advantage that only helps the sim
-    // reach lands for expensive spells. Reset per-card overrides on a new deck.
-    const drawRamp = cards.filter((c) => c.smooth && !isLandType(c.type));
-    state.smoothCards = drawRamp
-      .filter((c) => manaValue(c.cost) <= SMOOTH_MAX_MV)
-      .map((c) => ({ name: c.name, qty: qtyByName[c.name] || 0 }));
-    state.digCards = drawRamp
-      .filter((c) => manaValue(c.cost) > SMOOTH_MAX_MV)
-      .map((c) => ({ name: c.name, qty: qtyByName[c.name] || 0 }));
-    if (newDeck) { state.smoothOverrides = {}; state.digOverrides = {}; }
-
-    // Conditional fixing: turn on lands whose spell-type condition the deck meets.
-    applyConditions(cards, qtyByName);
-
-    state.landTarget = recommendLandCount(avg, state.deckSize, smoothCount());
+    // Stash the resolved deck so a cost-override edit can recompute everything
+    // cost-derived without re-resolving from Scryfall.
+    state.resolvedCards = cards;
+    state.qtyByName = qtyByName;
+    rebuildFromCosts();
 
     // Load the deck's own lands into the build so the dashboard + grades reflect
     // your actual manabase — only on a new deck (so confidence changes don't wipe edits).
@@ -619,6 +720,7 @@ async function analyzeDeck() {
     if (deckColors().size) computeSuggested();
     updateLandPanel();
     gradeBuild();
+    populateDrawTool();
     $("#recommendBtn").disabled = false;
     $("#suggestToggle").disabled = false;
     $("#exportBtn").disabled = false;
@@ -629,7 +731,7 @@ async function analyzeDeck() {
     if (loadedLands) parts.push(`Loaded ${loadedLands} lands from your deck.`);
     const sc = smoothCount();
     if (sc) {
-      const delta = recommendLandCount(avg, state.deckSize, 0) - state.landTarget;
+      const delta = recommendLandCount(state.avgMV, state.deckSize, 0) - state.landTarget;
       parts.push(`${sc} cheap draw/ramp card${sc === 1 ? "" : "s"} (↻)` +
         (delta > 0 ? ` trim ~${delta} land${delta === 1 ? "" : "s"} off the target.` : ` factored into the target.`));
     }
@@ -690,6 +792,18 @@ function renderSpellStrip() {
       tag.addEventListener("click", (e) => { e.stopPropagation(); openSmoothPop(spell.name, spell.qty, tag, "dig"); });
       cell.appendChild(tag);
     }
+    // Cost-override affordance: cast this card at the cost you'll actually pay
+    // (kicker, X pinned, a free spell's alternative cost…). Marks the cell when set.
+    const overridden = state.costOverrides[spell.name] != null;
+    const costTag = el("button", "cost-tag");
+    costTag.textContent = "✎";
+    costTag.title = overridden
+      ? `Cost overridden to ${state.costOverrides[spell.name]}. Click to change or reset.`
+      : "Override the mana cost you'll actually pay (kicker, X, a free spell's alt cost). Click to set.";
+    costTag.setAttribute("aria-label", `Override cost for ${spell.name}`);
+    costTag.addEventListener("click", (e) => { e.stopPropagation(); openCostPop(spell, costTag); });
+    cell.appendChild(costTag);
+    if (overridden) cell.dataset.costOverride = "1";
     grid.appendChild(cell);
     state.spellCells.set(spell.name, cell);
   }
@@ -703,21 +817,33 @@ function gradeBuild() {
   _gradeTimer = setTimeout(() => { doGrade(); scheduleSim(); }, 90);
 }
 
+// A spell's colors-only castability under the given per-color source counts.
+// Resolves each two-color hybrid pip to the color with the most live sources (the
+// one you're likeliest to pay it with), then runs the conditional Karsten model.
+// Shared by the live grade strip and the JSON export so they never drift.
+function spellColorProb(spell, sources, total) {
+  const pips = { ...spell.pips };
+  for (const pair of (spell.hybrids || [])) {
+    let best = pair[0];
+    for (const c of pair) if ((sources[c] || 0) > (sources[best] || 0)) best = c;
+    pips[best] = (pips[best] || 0) + 1;
+  }
+  const cols = Object.keys(pips).filter((c) => pips[c] > 0);
+  if (cols.length <= 1) {
+    const c = cols[0];
+    return c ? castableProbability(pips[c], spell.mv, sources[c], state.deckSize, total) : 1;
+  }
+  const srcByColor = {};
+  for (const c of cols) srcByColor[c] = sources[c];
+  return multivariateCastable(pips, spell.mv, srcByColor, state.deckSize, total);
+}
+
 function doGrade() {
   const t = tally();
   const sources = { W: t.W, U: t.U, B: t.B, R: t.R, G: t.G };
   let worst = 1;
   for (const spell of state.spells) {
-    const cols = Object.keys(spell.pips);
-    let prob;
-    if (cols.length <= 1) {
-      const c = cols[0];
-      prob = c ? castableProbability(spell.pips[c], spell.mv, sources[c], state.deckSize, t.total) : 1;
-    } else {
-      const srcByColor = {};
-      for (const c of cols) srcByColor[c] = sources[c];
-      prob = multivariateCastable(spell.pips, spell.mv, srcByColor, state.deckSize, t.total);
-    }
+    const prob = spellColorProb(spell, sources, t.total);
     const cell = state.spellCells.get(spell.name);
     if (cell) {
       cell.dataset.g = grade(prob).letter;   // data-g drives the gentle color tint only
@@ -773,6 +899,7 @@ function doSimulate() {
   // Both cheap smoothers and mid-cost diggers help you find lands in a real game.
   // Run both seatings so each card shows on-the-play → on-the-draw side by side.
   const drawCount = smoothCount() + digCount();
+  const fetches = fetchCount();
   // The draw-cut recommendation (and the leaner build it implies). Build stays as-is —
   // when "Preview the cut" is on, only the DRAW seating simulates that leaner build.
   const slack = computeDrawSlack();
@@ -780,8 +907,8 @@ function doSimulate() {
   const drawLands = previewing ? slack.cutLands : lands;
   // Seed both (common random numbers): the figures stay stable between edits, and
   // toggling the preview moves only the cards a cut genuinely affects — no MC jitter.
-  const resPlay = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount, onPlay: true, seed: BATTLE_SEED });
-  const resDraw = simulateDeck(state.spells, drawLands, state.deckSize, { trials: 5000, drawCount, onPlay: false, seed: BATTLE_SEED });
+  const resPlay = simulateDeck(state.spells, lands, state.deckSize, { trials: 5000, drawCount, fetchCount: fetches, onPlay: true, seed: BATTLE_SEED });
+  const resDraw = simulateDeck(state.spells, drawLands, state.deckSize, { trials: 5000, drawCount, fetchCount: fetches, onPlay: false, seed: BATTLE_SEED });
   // Refresh both figures on each card's clock pill — the model badge stays as-is. The
   // play figure is always your real build; the draw figure follows the preview.
   for (const spell of state.spells) {
@@ -791,7 +918,16 @@ function doSimulate() {
     const playEl = cell.querySelector(".sp-play"), drawEl = cell.querySelector(".sp-draw");
     playEl.textContent = pct(pp); playEl.dataset.g = grade(pp).letter;
     drawEl.textContent = pct(pd); drawEl.dataset.g = grade(pd).letter;
-    cell.querySelector(".sim-pill").hidden = false;
+    const pill = cell.querySelector(".sim-pill");
+    // Average delay (turns late) on the play — surfaced as a tooltip so the strip
+    // stays uncluttered. 0.0 means it's on curve essentially every game.
+    const delay = resPlay.delayBySpell[spell.name];
+    if (delay != null) {
+      const title = pill.querySelector("title");
+      const base = "Real games: do you draw enough lands, on time? Simulated on-curve rate (incl. screw & flood) — on the play → on the draw.";
+      if (title) title.textContent = `${base} Avg delay when not on curve: +${delay.toFixed(1)} turns.`;
+    }
+    pill.hidden = false;
   }
   $("#spellGrid").classList.toggle("preview-draw", previewing);   // dotted cue on the → figures
   // Overall headline = the true (simulated) weakest on the play (the conservative floor);
@@ -801,8 +937,14 @@ function doSimulate() {
   const ogl = og.querySelector(".og-letter");
   ogl.textContent = pct(resPlay.overall);
   ogl.dataset.g = grade(resPlay.overall).letter;
+  // Keep-rate context: how often this build keeps seven, and how often it digs to a
+  // mulligan — the headline "real games" figure already prices the mulligans in.
+  const kr = resPlay.keepRates, mr = resPlay.mulliganRate;
+  const keepNote = kr
+    ? ` · keeps 7 in ${Math.round(kr[7] * 100)}% of games, mulligans ${Math.round(mr * 100)}%`
+    : "";
   og.querySelector(".og-text").textContent =
-    `Weakest card in real games, incl. screw · ${pct(resDraw.overall)} on the draw${previewing ? " (−" + slack.cut + ")" : ""} · ${pct(state.staticWorst != null ? state.staticWorst : resPlay.overall)} on colors alone`;
+    `Weakest card in real games, incl. screw · ${pct(resDraw.overall)} on the draw${previewing ? " (−" + slack.cut + ")" : ""} · ${pct(state.staticWorst != null ? state.staticWorst : resPlay.overall)} on colors alone${keepNote}`;
   updateMobileGrade(pct(resPlay.overall), grade(resPlay.overall).letter);
   renderDrawSlack(slack);   // "you can cut N lands on the draw" guidance + the preview button
 }
@@ -841,8 +983,9 @@ function computeDrawSlack() {
   const total = base.reduce((s, l) => s + l.count, 0);
   if (!state.spells.length || !total) return { cut: 0, color: null, total };
   const drawCount = smoothCount() + digCount();
+  const fetches = fetchCount();
   const overall = (lands, onPlay) =>
-    simulateDeck(state.spells, lands, state.deckSize, { trials: 4000, seed: BATTLE_SEED, drawCount, onPlay }).overall;
+    simulateDeck(state.spells, lands, state.deckSize, { trials: 4000, seed: BATTLE_SEED, drawCount, fetchCount: fetches, onPlay }).overall;
   const playBar = overall(base, true);          // on the play, full build — the bar to clear
   let work = base.map((l) => ({ ...l }));
   let cut = 0, color = null, drawAfter = overall(base, false);   // on the draw, before any cut
@@ -969,11 +1112,12 @@ const BATTLE_SEED = 0x9e3779b9;
 // null (no spells / solver down) — callers fall back to the ILP options.
 async function computeBattleTested() {
   const drawCount = smoothCount() + digCount();
+  const fetches = fetchCount();
   // Per-trial common random numbers: every candidate faces the identical luck on
   // each trial (robust to builds mulliganing at different rates), so the comparison
   // is low-variance and the pick is deterministic.
   const simulate = (buildLands, deckSize, trials) =>
-    simulateDeck(state.spells, buildLands, deckSize, { trials, drawCount, seed: BATTLE_SEED });
+    simulateDeck(state.spells, buildLands, deckSize, { trials, drawCount, fetchCount: fetches, seed: BATTLE_SEED });
   const pick = await battleTested({
     requirements: state.requirements, lands: state.lands, landTarget: state.landTarget,
     demandWeights: state.demand, spells: state.spells, deckSize: state.deckSize, simulate,
@@ -1180,34 +1324,243 @@ function applyRecommendation() {
   gradeBuild();
 }
 
-/* ---------- export the build as a decklist ---------- */
-function exportDecklist() {
-  const lines = [];
-  if (state.spells.length || state.deckCards.length) {
-    // include the analyzed nonland deck cards (with their quantities)
-    const spellByName = new Map(state.spells.map((s) => [s.name, s]));
-    lines.push("// Spells");
-    for (const c of state.deckCards) {
-      const s = spellByName.get(c.name);
-      lines.push(`${s ? s.qty : 1} ${c.name}`);
-    }
-    lines.push("");
+/* ---------- export & share ---------- */
+// The current deck + chosen manabase as an Arena/MTGO-importable decklist.
+function decklistText() {
+  const lines = ["Deck"];
+  const spellByName = new Map(state.spells.map((s) => [s.name, s]));
+  for (const c of state.deckCards) {
+    const s = spellByName.get(c.name);
+    lines.push(`${s ? s.qty : 1} ${c.name}`);
   }
-  lines.push("// Lands");
   const land = [];
   for (const l of state.lands) {
     const n = state.counts[l.name] || 0;
     if (n) land.push(`${n} ${l.name}`);
   }
-  lines.push(...(land.length ? land : ["(no lands added yet)"]));
-  const text = lines.join("\n");
+  if (land.length) { lines.push(""); lines.push(...land); }
+  return lines.join("\n");
+}
+
+function openExport() {
+  const text = decklistText();
   $("#exportText").value = text;
   $("#exportCopied").textContent = "";
   openDrawer($("#exportModal"));
   navigator.clipboard?.writeText(text).then(
-    () => { $("#exportCopied").textContent = "Copied to clipboard."; },
+    () => { $("#exportCopied").textContent = "Decklist copied to clipboard."; },
     () => { $("#exportCopied").textContent = "Select all and copy."; },
   );
+}
+
+// The full analysis as a plain, versioned object — requirements, the chosen build,
+// colors-only grades + simulated on-curve odds. Grades reuse spellColorProb and the
+// same simulateDeck call the live view uses, so nothing is scraped from the DOM.
+function buildAnalysisJSON() {
+  const t = tally();
+  const sources = { W: t.W, U: t.U, B: t.B, R: t.R, G: t.G };
+  const drawCount = smoothCount() + digCount();
+  const fetches = fetchCount();
+  const sp = state.spells.length
+    ? simulateDeck(state.spells, currentSimLands(), state.deckSize, { trials: 5000, drawCount, fetchCount: fetches, onPlay: true, seed: BATTLE_SEED })
+    : null;
+  const sd = state.spells.length
+    ? simulateDeck(state.spells, currentSimLands(), state.deckSize, { trials: 5000, drawCount, fetchCount: fetches, onPlay: false, seed: BATTLE_SEED })
+    : null;
+  const cards = state.spells.map((spell) => {
+    const colorsProb = spellColorProb(spell, sources, t.total);
+    return {
+      name: spell.name, qty: spell.qty, mv: spell.mv,
+      colorsPct: Math.round(colorsProb * 100),
+      simPlayPct: sp ? Math.round(sp.bySpell[spell.name] * 100) : null,
+      simDrawPct: sd ? Math.round(sd.bySpell[spell.name] * 100) : null,
+      avgDelay: sp ? Number(sp.delayBySpell[spell.name].toFixed(2)) : null,
+      overridden: state.costOverrides[spell.name] != null,
+    };
+  });
+  const build = [];
+  for (const l of state.lands) {
+    const n = state.counts[l.name] || 0;
+    if (n) build.push({ name: l.name, count: n, colors: l.colors, tapped: !!l.tapped, basic: !!l.basic });
+  }
+  return {
+    schema: "mtg-manabase/1",
+    deck: { size: state.deckSize, avgMV: Number(state.avgMV.toFixed(2)), threshold: state.threshold, text: state.lastImportedDeck || $("#deckText").value.trim() },
+    requirements: { ...state.requirements },
+    build: { lands: build, total: t.total, landTarget: state.landTarget },
+    grades: {
+      overallColors: state.staticWorst != null ? Math.round(state.staticWorst * 100) : null,
+      overallSimPlay: sp ? Math.round(sp.overall * 100) : null,
+      overallSimDraw: sd ? Math.round(sd.overall * 100) : null,
+      keepSeven: sp ? Math.round(sp.keepRates[7] * 100) : null,
+      mulliganRate: sp ? Math.round(sp.mulliganRate * 100) : null,
+      cards,
+    },
+    costOverrides: { ...state.costOverrides },
+    conditionsActive: [...state.conditionsActive],
+  };
+}
+
+// Trigger a client-side file download (no dependency).
+function downloadBlob(filename, mime, text) {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = el("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function exportAnalysisJSON() {
+  const json = JSON.stringify(buildAnalysisJSON(), null, 2);
+  downloadBlob("manabase-analysis.json", "application/json", json);
+  $("#exportCopied").textContent = "Analysis JSON downloaded.";
+}
+
+// --- shareable URL (deck + build encoded in the hash) ----------------------
+const _b64u = {
+  enc: (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+  dec: (s) => {
+    s = s.replace(/-/g, "+").replace(/_/g, "/");
+    const bin = atob(s);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  },
+};
+
+async function encodeShare(payload) {
+  const json = JSON.stringify(payload);
+  // Compress with the built-in gzip stream when available; fall back to a plain
+  // (uncompressed) URI-encoded payload otherwise. The "z"/"u" prefix tags which.
+  if (typeof CompressionStream === "function") {
+    const cs = new CompressionStream("deflate-raw");
+    const writer = cs.writable.getWriter();
+    writer.write(new TextEncoder().encode(json)); writer.close();
+    const buf = new Uint8Array(await new Response(cs.readable).arrayBuffer());
+    return "z" + _b64u.enc(buf);
+  }
+  return "u" + encodeURIComponent(json);
+}
+
+async function decodeShare(hash) {
+  const tag = hash[0], body = hash.slice(1);
+  if (tag === "u") return JSON.parse(decodeURIComponent(body));
+  if (tag === "z") {
+    const ds = new DecompressionStream("deflate-raw");
+    const writer = ds.writable.getWriter();
+    writer.write(_b64u.dec(body)); writer.close();
+    const text = await new Response(ds.readable).text();
+    return JSON.parse(text);
+  }
+  return null;
+}
+
+async function copyShareLink() {
+  const deck = state.lastImportedDeck || $("#deckText").value.trim();
+  if (!deck) { $("#exportCopied").textContent = "Analyze a deck first."; return; }
+  const payload = { v: 1, deck, conf: state.threshold, lands: { ...state.counts } };
+  const url = location.origin + location.pathname + "#" + (await encodeShare(payload));
+  $("#exportText").value = url;
+  navigator.clipboard?.writeText(url).then(
+    () => { $("#exportCopied").textContent = "Share link copied to clipboard."; },
+    () => { $("#exportCopied").textContent = "Select all and copy the link above."; },
+  );
+}
+
+// Reconstruct a shared analysis from location.hash, if present. Returns true if it
+// handled a link (so boot skips the localStorage path).
+async function loadFromShareLink() {
+  const hash = location.hash.slice(1);
+  if (!hash) return false;
+  let payload;
+  try { payload = await decodeShare(hash); } catch { return false; }
+  if (!payload || !payload.deck) return false;
+  $("#deckText").value = payload.deck;
+  if (payload.conf != null) { $("#confSel").value = String(payload.conf); state.threshold = payload.conf; }
+  await analyzeDeck();
+  // Apply the shared custom build after analyze (analyze seeds counts from the
+  // deck's own lands; this overrides with the exact shared manabase).
+  if (payload.lands && Object.keys(payload.lands).length) {
+    state.counts = { ...payload.lands };
+    syncCountsToTiles();
+    applyVisibility();
+    markFixers();
+    refreshDashboard();
+    gradeBuild();
+  }
+  return true;
+}
+
+/* ---------- draw-odds query tool ---------- */
+// Rebuild the card dropdown from the analyzed deck (name -> copies), keeping the
+// "Custom numbers" sentinel first. Called after each analyze.
+function populateDrawTool() {
+  const sel = $("#drawCardSel");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = `<option value="__custom__">Custom numbers…</option>`;
+  const names = Object.keys(state.qtyByName || {}).sort((a, b) => a.localeCompare(b));
+  for (const name of names) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = `${state.qtyByName[name]}× ${name}`;
+    sel.appendChild(opt);
+  }
+  // Keep the prior selection if it still exists, else default to the first real card.
+  if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  else if (names.length) sel.value = names[0];
+  recomputeDrawOdds();
+}
+
+// Resolve the query's population N and successes K from the current controls.
+function drawQueryParams() {
+  const sel = $("#drawCardSel");
+  const custom = !sel || sel.value === "__custom__";
+  $("#drawCustoms").hidden = !custom;
+  if (custom) {
+    return {
+      population: Math.max(1, parseInt($("#drawPop").value, 10) || 60),
+      successes: Math.max(0, parseInt($("#drawSucc").value, 10) || 0),
+      label: "this card",
+    };
+  }
+  return {
+    population: state.deckSize || 60,
+    successes: state.qtyByName[sel.value] || 0,
+    label: sel.value,
+  };
+}
+
+function recomputeDrawOdds() {
+  const readout = $("#drawReadout");
+  const chart = $("#drawChart");
+  if (!readout || !chart) return;
+  const { population, successes, label } = drawQueryParams();
+  const k = Math.max(1, parseInt($("#drawN").value, 10) || 1);
+  const turn = Math.max(1, Math.min(15, parseInt($("#drawTurn").value, 10) || 1));
+  const onPlay = $("#drawPlay").value !== "draw";
+  const p = drawOddsByTurn(population, successes, k, turn, onPlay);
+  const copies = successes === 1 ? "copy" : "copies";
+  readout.innerHTML =
+    `<strong>${(p * 100).toFixed(1)}%</strong> to draw ≥${k} of ${successes} ${copies}` +
+    ` of ${label === "this card" ? "this card" : `<span class="dt-name">${label}</span>`}` +
+    ` by turn ${turn} on the ${onPlay ? "play" : "draw"}` +
+    `<span class="dt-sub"> · from ${population} cards</span>`;
+  // Per-turn line: P(>=k) at turns 1..10, as horizontal bars (house .bar idiom).
+  chart.innerHTML = "";
+  for (let tt = 1; tt <= 10; tt++) {
+    const pt = drawOddsByTurn(population, successes, k, tt, onPlay);
+    const row = el("div", "dt-bar-row");
+    row.classList.toggle("on", tt === turn);
+    row.innerHTML =
+      `<span class="dt-bar-t">T${tt}</span>` +
+      `<span class="dt-bar"><span class="dt-bar-fill" style="width:${(pt * 100).toFixed(1)}%"></span></span>` +
+      `<span class="dt-bar-p">${Math.round(pt * 100)}%</span>`;
+    chart.appendChild(row);
+  }
 }
 
 /* ---------- boot ---------- */
@@ -1215,6 +1568,7 @@ async function boot() {
   buildDashboard();
   refreshDashboard();
   wireEvents();
+  recomputeDrawOdds();   // standalone calculator works before any deck is loaded
   try {
     state.lands = await loadLands();
     for (const land of state.lands) {
@@ -1233,8 +1587,13 @@ async function boot() {
     $("#gridEmpty").hidden = false;
     $("#gridEmpty").textContent = "Failed to load data/lands.json: " + e.message;
   }
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) { $("#deckText").value = saved; analyzeDeck(); }
+  // A share link (deck + build in the hash) wins over the last local session.
+  let handled = false;
+  try { handled = await loadFromShareLink(); } catch { handled = false; }
+  if (!handled) {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) { $("#deckText").value = saved; analyzeDeck(); }
+  }
 }
 
 function readDeckFile(file) {
@@ -1256,8 +1615,10 @@ function wireEvents() {
   });
   $("#recClose").addEventListener("click", () => { hidePreview(); closeDrawer($("#recDrawer")); });
   $("#recApply").addEventListener("click", () => { hidePreview(); applyRecommendation(); });
-  $("#exportBtn").addEventListener("click", exportDecklist);
+  $("#exportBtn").addEventListener("click", openExport);
   $("#exportClose").addEventListener("click", () => closeDrawer($("#exportModal")));
+  $("#shareLinkBtn").addEventListener("click", copyShareLink);
+  $("#exportJsonBtn").addEventListener("click", exportAnalysisJSON);
   // Backdrop click (on the dim area, not the card) closes a drawer.
   for (const id of ["recDrawer", "exportModal"]) {
     const d = $("#" + id);
@@ -1266,9 +1627,10 @@ function wireEvents() {
   // Escape closes whatever overlay is open (drawer first, then the tweak popover).
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    const rec = $("#recDrawer"), exp = $("#exportModal"), pop = $("#smoothPop");
+    const rec = $("#recDrawer"), exp = $("#exportModal"), pop = $("#smoothPop"), cp = $("#costPop");
     if (!rec.hidden) { hidePreview(); closeDrawer(rec); }
     else if (!exp.hidden) closeDrawer(exp);
+    else if (!cp.hidden) cp.hidden = true;
     else if (!pop.hidden) pop.hidden = true;
   });
   $("#suggestToggle").addEventListener("click", () => {
@@ -1296,13 +1658,33 @@ function wireEvents() {
     note.hidden = !note.hidden;
     e.currentTarget.setAttribute("aria-expanded", String(!note.hidden));
   });
+  // Draw-odds tool: every control recomputes; the (i) toggles the explainer.
+  for (const id of ["drawCardSel", "drawN", "drawTurn", "drawPlay", "drawPop", "drawSucc"]) {
+    const ev = (id === "drawCardSel" || id === "drawPlay") ? "change" : "input";
+    $("#" + id).addEventListener(ev, recomputeDrawOdds);
+  }
+  $("#drawInfo").addEventListener("click", (e) => {
+    const note = $("#drawInfoNote");
+    note.hidden = !note.hidden;
+    e.currentTarget.setAttribute("aria-expanded", String(!note.hidden));
+  });
   $("#smoothMinus").addEventListener("click", () => changeSmooth(-1));
   $("#smoothPlus").addEventListener("click", () => changeSmooth(1));
-  // Dismiss the tweak popover on an outside click.
+  // Cost-override popover: live preview on input, apply/reset on the buttons,
+  // Enter to apply.
+  $("#costPopInput").addEventListener("input", renderCostPreview);
+  $("#costPopInput").addEventListener("keydown", (e) => { if (e.key === "Enter") applyCostPop(); });
+  $("#costPopApply").addEventListener("click", applyCostPop);
+  $("#costPopReset").addEventListener("click", resetCostPop);
+  // Dismiss the tweak/cost popovers on an outside click.
   document.addEventListener("click", (e) => {
     const pop = $("#smoothPop");
     if (!pop.hidden && !pop.contains(e.target) && !e.target.closest(".smooth-tag")) {
       pop.hidden = true;
+    }
+    const cp = $("#costPop");
+    if (!cp.hidden && !cp.contains(e.target) && !e.target.closest(".cost-tag")) {
+      cp.hidden = true;
     }
   });
   $("#confSel").addEventListener("change", (e) => {

@@ -50,6 +50,53 @@ export function cardsSeen(turn, onPlay = true) {
   return onPlay ? 7 + (turn - 1) : 7 + turn;
 }
 
+// --- plain (unconditional) hypergeometric, memoised -----------------------
+
+const _atLeastCache = new Map();
+
+/**
+ * P(draw >= k successes) for a sample of `sample` from `population`, where there
+ * are `successes` successes in the population. Plain hypergeometric — distinct
+ * from the conditional castability model. Powers the draw-odds query tool.
+ * @param {number} population
+ * @param {number} successes
+ * @param {number} sample
+ * @param {number} k
+ * @returns {number}
+ */
+export function hypergeomAtLeast(population, successes, sample, k) {
+  if (k <= 0) return 1.0;
+  sample = Math.min(sample, population);
+  if (k > successes || k > sample) return 0.0;
+  const key = [population, successes, sample, k].join(",");
+  const cached = _atLeastCache.get(key);
+  if (cached !== undefined) return cached;
+  const denom = comb(population, sample);
+  if (denom === 0n) return 0.0;
+  const lo = Math.max(k, sample - (population - successes));
+  const hi = Math.min(successes, sample);
+  let numer = 0n;
+  for (let x = lo; x <= hi; x++) {
+    numer += comb(successes, x) * comb(population - successes, sample - x);
+  }
+  const result = Number(numer) / Number(denom);
+  _atLeastCache.set(key, result);
+  return result;
+}
+
+/**
+ * P(>= k of `successes` copies seen by `turn`), on the play or draw.
+ * @param {number} deckSize
+ * @param {number} successes
+ * @param {number} k
+ * @param {number} turn
+ * @param {boolean} [onPlay=true]
+ * @returns {number}
+ */
+export function drawOddsByTurn(deckSize, successes, k, turn, onPlay = true) {
+  return hypergeomAtLeast(deckSize, successes, cardsSeen(turn, onPlay), k);
+}
+
 /**
  * Karsten's sliding confidence target: (89 + M)%, clamped to THRESHOLD_CAP.
  * @param {number} mv

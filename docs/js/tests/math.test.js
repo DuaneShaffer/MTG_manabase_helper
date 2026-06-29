@@ -13,6 +13,8 @@ import {
   sourcesNeeded,
   grade,
   multivariateCastable,
+  hypergeomAtLeast,
+  drawOddsByTurn,
 } from "../hypergeometric.js";
 import { sourcesFor, requirementsForCosts, requirementsForCards } from "../requirements.js";
 
@@ -83,13 +85,30 @@ check("colorsInCost returns distinct WUBRG set", () => {
 });
 
 check("X/Y/Z and hybrid handling", () => {
-  // X contributes 0; hybrid {W/U} -> generic
+  // X contributes 0
   assert.strictEqual(manaValue("{X}{W}"), 1);
-  const { generic } = parseCost("{W/U}{B}");
-  assert.strictEqual(generic, 1); // hybrid -> generic
+  // two-color hybrid {W/U}: a hybrid pair, no hard color, +1 to MV
+  const { generic, colored, hybrid } = parseCost("{1}{W/U}");
+  assert.strictEqual(generic, 1);
+  assert.deepStrictEqual(hybrid, [["W", "U"]]);
+  assert.strictEqual(colored.W, 0);
+  assert.strictEqual(manaValue("{1}{W/U}"), 2);
+  // {W/U} hard-needs no specific color (colorsInCost excludes hybrids)
+  assert.strictEqual(colorsInCost("{W/U}").size, 0);
+  // twobrid {2/W} -> generic 2 (no color pressure); Phyrexian {W/P} -> generic 1
+  assert.strictEqual(parseCost("{2/W}").generic, 2);
+  assert.strictEqual(manaValue("{2/W}"), 2);
+  assert.strictEqual(parseCost("{W/P}").generic, 1);
   const cc = costConstraints("{1}{W}{U}");
   assert.strictEqual(cc.W.gold, true); // two distinct colors -> gold
   assert.strictEqual(cc.U.gold, true);
+});
+
+check("hybrid requirement leans on the deck's invested color", () => {
+  // Heavy white -> {W/U} casts off white: white pressure, zero blue demand.
+  const req = requirementsForCosts(["{W}{W}{W}", "{W}{W}", "{W/U}{W/U}"]);
+  assert.strictEqual(req.U, 0);
+  assert.ok(req.W > 0, `expected white demand, got ${req.W}`);
 });
 
 // --- castable_probability within 1e-6 of Python floats ---------------------
@@ -169,6 +188,23 @@ check("multivariateCastable falls back for 0/1 colors", () => {
   assert.ok(Math.abs(one - castableProbability(2, 3, 18)) < 1e-12);
   // 0 colors -> 1.0
   assert.strictEqual(multivariateCastable({}, 3, {}, 60, null, true), 1.0);
+});
+
+// --- plain hypergeometric (draw-odds tool) matches Python goldens ----------
+check("hypergeomAtLeast matches Python goldens", () => {
+  assert.ok(Math.abs(hypergeomAtLeast(60, 4, 7, 1) - 0.3994996257446656) < 1e-12);
+  assert.ok(Math.abs(hypergeomAtLeast(60, 25, 7, 1) - 0.9825882974857105) < 1e-12);
+  assert.ok(Math.abs(drawOddsByTurn(60, 4, 2, 4, true) - 0.12578055307760927) < 1e-12);
+});
+check("hypergeomAtLeast edge cases", () => {
+  assert.strictEqual(hypergeomAtLeast(60, 4, 7, 0), 1.0);   // k=0 -> certain
+  assert.strictEqual(hypergeomAtLeast(60, 3, 7, 4), 0.0);   // k > successes -> 0
+  assert.strictEqual(hypergeomAtLeast(40, 20, 3, 4), 0.0);  // k > sample -> 0
+});
+check("hypergeomAtLeast is monotonic in copies and turn", () => {
+  assert.ok(hypergeomAtLeast(60, 8, 7, 1) > hypergeomAtLeast(60, 4, 7, 1));   // more copies
+  assert.ok(drawOddsByTurn(60, 4, 1, 6, true) > drawOddsByTurn(60, 4, 1, 2, true)); // later turn
+  assert.ok(drawOddsByTurn(60, 4, 1, 3, false) > drawOddsByTurn(60, 4, 1, 3, true)); // draw>play
 });
 
 console.log(`\nAll ${passed} checks passed.`);

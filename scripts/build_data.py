@@ -232,6 +232,23 @@ def slim_land(card):
     return out
 
 
+def _fetches_land(card):
+    """True for a low-cost nonland spell that searches your library for a land.
+
+    Distinct from generic card draw: a fetch (Cultivate, land tutors) pulls a land
+    you can choose, so the simulator resolves it to the color you most need rather
+    than treating it as an anonymous dig. Lands that fetch (Evolving Wilds, Fabled
+    Passage) are flagged separately on the land side (`slim_land`).
+    """
+    if (card.get("cmc", 0) or 0) > 3:
+        return False
+    type_line = card.get("type_line", "") or ""
+    if "Land" in type_line.split("—")[0]:
+        return False  # the land-side `fetch` flag covers fetch *lands*
+    oracle = _oracle(card).lower()
+    return "search your library for" in oracle and "land" in oracle
+
+
 def _smooths(card):
     """Low-cost (<=3 MV) card-draw / ramp candidate.
 
@@ -287,6 +304,7 @@ def slim_card(card):
         "type": card.get("type_line", ""),
         "image": _uris(card).get("small"),
         "smooth": _smooths(card),
+        "fetch": _fetches_land(card),
     }
 
 

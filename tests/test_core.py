@@ -10,6 +10,8 @@ import json
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core import carddb, decklist, hypergeometric, lands, recommend, requirements
@@ -111,8 +113,8 @@ def test_requirements_ignores_empty_and_colorless():
 # --- token parser fixes (vs the old char-by-char parser) ------------------
 def test_parse_multi_digit_generic():
     # {10}{W} -> generic 10, one white pip. Old parser read "10" as 1+0=1.
-    generic, colored = requirements.parse_cost("{10}{W}")
-    assert generic == 10 and colored["W"] == 1
+    generic, colored, hybrid = requirements.parse_cost("{10}{W}")
+    assert generic == 10 and colored["W"] == 1 and hybrid == []
     assert requirements.karsten_shape("{10}{W}", "W") == ("10C", False)
 
 
@@ -122,15 +124,35 @@ def test_colorless_pip_is_not_gold():
     assert shape == "1C" and gold is False
 
 
-def test_hybrid_pip_treated_as_generic():
-    # Hybrid {W/U} forces no single color, so it adds no colored requirement.
+def test_hybrid_two_color_pip():
+    # {W/U} is payable by either color: no hard color, one hybrid pair, MV 1.
     assert requirements.colors_in_cost("{W/U}") == set()
-    generic, colored = requirements.parse_cost("{1}{W/U}")
-    assert generic == 2 and all(v == 0 for v in colored.values())
+    generic, colored, hybrid = requirements.parse_cost("{1}{W/U}")
+    assert generic == 1 and all(v == 0 for v in colored.values())
+    assert hybrid == [["W", "U"]]
+    assert requirements.mana_value("{1}{W/U}") == 2  # one generic + one hybrid
+
+
+def test_twobrid_and_phyrexian_fold_to_generic():
+    # {2/W} (pay 2 generic OR one W) -> generic 2, no color pressure, MV 2.
+    generic, colored, hybrid = requirements.parse_cost("{2/W}")
+    assert generic == 2 and hybrid == [] and all(v == 0 for v in colored.values())
+    assert requirements.mana_value("{2/W}") == 2
+    # {W/P} (Phyrexian, payable with life) -> generic 1, MV 1.
+    generic, colored, hybrid = requirements.parse_cost("{W/P}")
+    assert generic == 1 and hybrid == [] and all(v == 0 for v in colored.values())
+
+
+def test_hybrid_leans_on_invested_color():
+    # A deck already heavy in white casts a {W/U} card off white -- so the hybrid
+    # adds white pressure (already supported) and demands no blue sources.
+    reqs = requirements.requirements_for_costs(["{W}{W}{W}", "{W}{W}", "{W/U}{W/U}"])
+    assert reqs["U"] == 0
+    assert reqs["W"] > 0
 
 
 def test_variable_x_is_zero():
-    generic, _ = requirements.parse_cost("{X}{X}{R}")
+    generic, _colored, _hybrid = requirements.parse_cost("{X}{X}{R}")
     assert generic == 0
 
 
@@ -229,6 +251,25 @@ def test_castable_probability_monotonic_and_graded():
     p_low = hypergeometric.castable_probability(2, 3, sources=10)
     p_high = hypergeometric.castable_probability(2, 3, sources=18)
     assert 0 <= p_low < p_high <= 1
+
+
+def test_hypergeom_at_least_goldens():
+    # ~40% to open at least one of a 4-of in 60; ~98% to open a land in a 25-land deck.
+    assert hypergeometric.hypergeom_at_least(60, 4, 7, 1) == pytest.approx(0.3994996257446656)
+    assert hypergeometric.hypergeom_at_least(60, 25, 7, 1) == pytest.approx(0.9825882974857105)
+    assert hypergeometric.draw_odds_by_turn(60, 4, 2, 4, True) == pytest.approx(0.12578055307760927)
+
+
+def test_hypergeom_at_least_edges():
+    assert hypergeometric.hypergeom_at_least(60, 4, 7, 0) == 1.0   # k=0 -> certain
+    assert hypergeometric.hypergeom_at_least(60, 3, 7, 4) == 0.0   # k > successes
+    assert hypergeometric.hypergeom_at_least(40, 20, 3, 4) == 0.0  # k > sample
+
+
+def test_hypergeom_at_least_monotonic():
+    assert hypergeometric.hypergeom_at_least(60, 8, 7, 1) > hypergeometric.hypergeom_at_least(60, 4, 7, 1)
+    assert hypergeometric.draw_odds_by_turn(60, 4, 1, 6) > hypergeometric.draw_odds_by_turn(60, 4, 1, 2)
+    assert hypergeometric.draw_odds_by_turn(60, 4, 1, 3, False) > hypergeometric.draw_odds_by_turn(60, 4, 1, 3, True)
     assert hypergeometric.grade(0.97)[0] == "A"
     assert hypergeometric.grade(0.5)[0] == "F"
     assert hypergeometric.castable_probability(0, 3, sources=0) == 1.0  # no pips → trivially castable
@@ -500,3 +541,27 @@ def test_smooths_ignores_board_triggered_card_selection():
     # Ramp / land fetch unaffected.
     assert s({"cmc": 1, "type_line": "Creature — Elf Druid", "produced_mana": ["G"],
               "oracle_text": "{T}: Add {G}."}) is True
+
+
+def test_fetch_flag_distinguishes_land_search_from_cantrips():
+    """`fetch` marks a low-cost nonland that searches for a *land* (the sim resolves
+    it to a chosen color), distinct from generic card draw (still `smooth`)."""
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    import build_data
+
+    cultivate = {"cmc": 3, "type_line": "Sorcery", "name": "Cultivate", "oracle_text":
+                 "Search your library for up to two basic land cards…"}
+    assert build_data._fetches_land(cultivate) is True
+    assert build_data._smooths(cultivate) is True            # a fetch is still a smoother
+    assert build_data.slim_card(cultivate)["fetch"] is True
+
+    cantrip = {"cmc": 1, "type_line": "Instant", "name": "Opt",
+               "oracle_text": "Scry 1. Draw a card."}
+    assert build_data._fetches_land(cantrip) is False
+    assert build_data.slim_card(cantrip)["fetch"] is False
+    assert build_data.slim_card(cantrip)["smooth"] is True
+
+    # Fetch *lands* (Evolving Wilds) are handled on the land side, not here.
+    assert build_data._fetches_land({"cmc": 0, "type_line": "Land", "name": "Evolving Wilds",
+                                     "oracle_text": "Search your library for a basic land card…"}) is False

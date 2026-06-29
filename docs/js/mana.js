@@ -6,27 +6,35 @@
 //   * multi-digit generic costs like `{10}` read as 10;
 //   * colorless `{C}` / snow `{S}` fold into generic pressure;
 //   * variable `{X}` / `{Y}` / `{Z}` contribute 0;
-//   * hybrid / Phyrexian / anything else -> treated as generic.
+//   * two-color hybrid `{W/U}` -> a hybrid pair (payable by either color);
+//   * twobrid `{2/W}` -> generic 2; Phyrexian `{W/P}` -> generic 1.
 
 import { COLORS } from "./colors.js";
 
 const TOKEN_RE = /\{([^}]+)\}/g;
+const HYBRID_RE = /^([WUBRG])\/([WUBRG])$/;  // two-color hybrid, e.g. W/U
+const TWOBRID_RE = /^2\/[WUBRG]$/;            // monocolored hybrid, e.g. 2/W
+const PHYREXIAN_RE = /^[WUBRG]\/P$/;          // Phyrexian, e.g. W/P
 
 /**
- * Tokenise a mana cost into { generic, colored: {W,U,B,R,G} }.
+ * Tokenise a mana cost into { generic, colored: {W,U,B,R,G}, hybrid }.
+ * `hybrid` is a list of two-color pairs (e.g. ["W","U"] for {W/U}), each
+ * payable by either color and contributing 1 to mana value.
  * @param {string} cost
- * @returns {{generic: number, colored: {W:number,U:number,B:number,R:number,G:number}}}
+ * @returns {{generic: number, colored: {W:number,U:number,B:number,R:number,G:number}, hybrid: string[][]}}
  */
 export function parseCost(cost) {
   let generic = 0;
   const colored = {};
   for (const c of COLORS) colored[c] = 0;
+  const hybrid = [];
 
   const str = cost || "";
   let match;
   TOKEN_RE.lastIndex = 0;
   while ((match = TOKEN_RE.exec(str)) !== null) {
     const token = match[1];
+    const hy = HYBRID_RE.exec(token);
     if (/^\d+$/.test(token)) {
       generic += parseInt(token, 10);
     } else if (token in colored) {
@@ -35,27 +43,33 @@ export function parseCost(cost) {
       generic += 1; // colorless / snow -> generic pressure
     } else if (token === "X" || token === "Y" || token === "Z") {
       continue; // variable cost contributes 0
+    } else if (hy) {
+      hybrid.push([hy[1], hy[2]]); // two-color hybrid: payable by either color
+    } else if (TWOBRID_RE.test(token)) {
+      generic += 2; // {2/W}: pay 2 generic or one W
+    } else if (PHYREXIAN_RE.test(token)) {
+      generic += 1; // {W/P}: payable with life -> generic
     } else {
-      generic += 1; // hybrid / Phyrexian / anything else -> generic
+      generic += 1; // anything else -> generic
     }
   }
-  return { generic, colored };
+  return { generic, colored, hybrid };
 }
 
 /**
- * Total mana value of a cost (generic + colorless + all pips).
+ * Total mana value of a cost (generic + colorless + all pips + hybrids).
  * @param {string} cost
  * @returns {number}
  */
 export function manaValue(cost) {
-  const { generic, colored } = parseCost(cost);
-  let sum = generic;
+  const { generic, colored, hybrid } = parseCost(cost);
+  let sum = generic + hybrid.length;
   for (const c of COLORS) sum += colored[c];
   return sum;
 }
 
 /**
- * The distinct WUBRG symbols appearing in a mana cost.
+ * The distinct hard WUBRG symbols appearing in a mana cost (hybrids excluded).
  * @param {string} cost
  * @returns {Set<string>}
  */
@@ -74,8 +88,8 @@ export function colorsInCost(cost) {
  * @returns {Object.<string, {pips:number, mv:number, gold:boolean}>}
  */
 export function costConstraints(cost) {
-  const { generic, colored } = parseCost(cost);
-  let mv = generic;
+  const { generic, colored, hybrid } = parseCost(cost);
+  let mv = generic + hybrid.length;
   let distinct = 0;
   for (const c of COLORS) {
     mv += colored[c];
