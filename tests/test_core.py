@@ -463,3 +463,34 @@ def test_basic_unless_land_defaults_tapped():
         "oracle_text": "This land enters tapped unless you control two or more other lands.\n{T}: Add {R} or {W}.",
     })
     assert slow["tapped"] is False and slow.get("slow") is True and "untapBasic" not in slow
+
+
+def test_smooths_ignores_board_triggered_card_selection():
+    """A card only counts as cheap draw/ramp (smooth) when the dig comes from casting
+    it — a cantrip, an ETB, or an always-on/activated ability — not from a board state
+    you have to earn. A draw gated behind attacking, tapping, or dealing combat damage
+    is not reliable early smoothing (Gran-Gran loots only when it becomes tapped)."""
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    import build_data
+    s = build_data._smooths
+
+    # The reported case: tap-triggered loot on a 1-drop creature -> NOT smooth.
+    assert s({"cmc": 1, "type_line": "Legendary Creature — Human", "oracle_text":
+              "Whenever Gran-Gran becomes tapped, draw a card, then discard a card."}) is False
+    # Other board-gated draws are out too.
+    assert s({"cmc": 2, "type_line": "Creature — Human", "oracle_text":
+              "Whenever this creature attacks, draw a card."}) is False
+    assert s({"cmc": 2, "type_line": "Creature", "oracle_text":
+              "When this creature dies, draw a card."}) is False
+
+    # Real smoothing stays smooth: a cantrip, an ETB draw, and an ETB-or-leaves draw
+    # (drawing on enter is cast-time smoothing even though it also triggers on leaving).
+    assert s({"cmc": 1, "type_line": "Instant", "oracle_text": "Draw a card."}) is True
+    assert s({"cmc": 2, "type_line": "Creature", "oracle_text":
+              "When this creature enters, draw a card."}) is True
+    assert s({"cmc": 2, "type_line": "Artifact", "oracle_text":
+              "When this artifact enters or leaves the battlefield, draw a card."}) is True
+    # Ramp / land fetch unaffected.
+    assert s({"cmc": 1, "type_line": "Creature — Elf Druid", "produced_mana": ["G"],
+              "oracle_text": "{T}: Add {G}."}) is True

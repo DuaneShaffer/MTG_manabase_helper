@@ -249,9 +249,26 @@ def _smooths(card):
         return True  # mana dork / rock
     if "search your library for" in oracle and "land" in oracle:
         return True  # cheap land ramp / fetch
-    # card draw / selection, across the common phrasings
+    # Card draw / selection only smooths your early game if you get it from CASTING the
+    # card — a cantrip, an ETB, or an always-on ability — not from a board-dependent
+    # trigger you have to earn first. A draw gated behind attacking, tapping, dealing
+    # combat damage, dying, or blocking isn't reliable early smoothing (and is often a
+    # card-neutral loot), so it shouldn't trim the land count. Scope the signal to its
+    # own sentence so a gated trigger doesn't disqualify a real cantrip elsewhere on the
+    # card. E.g. Gran-Gran ("Whenever Gran-Gran becomes tapped, draw a card, then
+    # discard a card") is gated on tapping → not a smoother.
     SIGNALS = ("draw", "scry", "surveil", "look at the top", "into your hand")
-    return any(s in oracle for s in SIGNALS)
+    GATES = ("becomes tapped", "attacks", "you attack", "deals combat damage",
+             "dies", "blocks")
+    for sentence in re.split(r"[.\n]", oracle):
+        if not any(s in sentence for s in SIGNALS):
+            continue
+        if "enters" in sentence:                       # draws on ETB -> real cast-time smoothing
+            return True                                # (even if it also triggers on leaving/dying)
+        if any(g in sentence for g in GATES):          # otherwise gated behind a board trigger
+            continue                                   # -> not reliable early smoothing
+        return True                                    # cantrip / static / activated draw
+    return False
 
 
 def slim_card(card):
