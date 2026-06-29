@@ -194,7 +194,10 @@ section.deck-input, section.dashboard, section.tools {
 .info-dot {
   width: 19px; height: 19px; border-radius: 50%; border: 1px solid var(--ink-dim);
   background: transparent; color: var(--ink-dim); cursor: pointer; line-height: 1;
-  font-family: Georgia, serif; font-style: italic; font-size: 12px; display: grid; place-items: center;
+  font-family: Georgia, serif; font-style: italic; font-size: 12px;
+  /* inline-grid (not grid) so it sits right after the heading/text it annotates
+     instead of dropping to its own line; nudged to sit centered on the text. */
+  display: inline-grid; place-items: center; vertical-align: middle;
   transition: color .12s, border-color .12s, background .12s;
 }
 .info-dot:hover { color: var(--parchment); border-color: var(--parchment); }
