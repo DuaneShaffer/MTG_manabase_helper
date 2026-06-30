@@ -235,6 +235,9 @@ section.deck-input, section.dashboard, section.tools {
   border-radius: var(--radius-sm); padding: 12px 14px; }
 .pd-advice[hidden] { display: none; }
 .pd-advice .pa-text { display: block; margin-bottom: 10px; }
+/* the "too few lands to cut" state has no button — don't stretch to card height (that
+   leaves the short note floating at the top over empty space); size to content + center. */
+.pd-advice:not(:has(.pa-btn)) { align-self: center; }
 .pd-advice strong { color: var(--parchment); font-weight: 600; }
 .pd-advice .pa-h { color: var(--guide); font-weight: 600; }
 /* preview toggle — guide hue, quiet until active (matches "guidance, not action") */
