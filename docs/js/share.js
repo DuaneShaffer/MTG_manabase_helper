@@ -99,3 +99,32 @@ export function sanitizeCostOverrides(src) {
   }
   return out;
 }
+
+// The whole session as one plain payload — the v2 share-link shape. localStorage
+// persists the same object, so a saved session and a share link restore through
+// the same sanitize-and-apply path.
+export function buildStatePayload({ deck, conf, lands, costOverrides, smooth, dig }) {
+  return {
+    v: 2, deck, conf: conf ?? null,
+    lands: { ...(lands || {}) },
+    costOverrides: { ...(costOverrides || {}) },
+    smooth: { ...(smooth || {}) },
+    dig: { ...(dig || {}) },
+  };
+}
+
+// Parse the localStorage value into a payload. The key historically held the
+// bare deck text; it now holds the JSON payload above — accept both. Returns a
+// payload with at least a non-empty {deck}, or null when nothing is usable.
+// Stored data is no more trustworthy than a share link (another tab, an old
+// version), so callers still run every field through the sanitizers above.
+export function parseStoredValue(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  if (raw.trimStart().startsWith("{")) {
+    try {
+      const p = JSON.parse(raw);
+      return (p && typeof p === "object" && typeof p.deck === "string" && p.deck) ? p : null;
+    } catch { /* not JSON — fall through: legacy decklists are plain text */ }
+  }
+  return { v: 1, deck: raw };
+}

@@ -5,6 +5,7 @@ import assert from "assert";
 import {
   encodeShare, decodeShare, UnsupportedShareError,
   clampLandCounts, coerceConf, clampCopyOverrides, sanitizeCostOverrides,
+  buildStatePayload, parseStoredValue,
 } from "../share.js";
 
 let passed = 0;
@@ -100,6 +101,46 @@ const V2 = {
   const out = sanitizeCostOverrides({ A: "{1}{R}", B: 7, C: "", D: "x".repeat(99) });
   assert.deepStrictEqual(out, { A: "{1}{R}" });
   ok("cost overrides keep only sane strings", true);
+}
+
+// 9. buildStatePayload emits the v2 share shape (and copies, never aliases).
+{
+  const lands = { ...V2.lands };
+  const p = buildStatePayload({
+    deck: V2.deck, conf: 0.95, lands,
+    costOverrides: V2.costOverrides, smooth: V2.smooth, dig: V2.dig,
+  });
+  assert.deepStrictEqual(p, V2);
+  ok("buildStatePayload matches the v2 share payload shape", true);
+  lands.Mountain = 7;
+  ok("payload copies its inputs (later state edits don't mutate it)", p.lands.Mountain === 20);
+  const bare = buildStatePayload({ deck: "20 Island" });
+  ok("absent fields default to null conf + empty objects",
+    bare.conf === null && Object.keys(bare.lands).length === 0
+    && Object.keys(bare.costOverrides).length === 0
+    && Object.keys(bare.smooth).length === 0 && Object.keys(bare.dig).length === 0);
+  ok("undefined conf stores as null (JSON-safe)", "conf" in bare);
+}
+
+// 10. localStorage round-trip: what saveLocal writes, parseStoredValue reads back.
+{
+  const p = buildStatePayload({ deck: V2.deck, conf: null, lands: { Mountain: 20 } });
+  assert.deepStrictEqual(parseStoredValue(JSON.stringify(p)), p);
+  ok("stored JSON payload round-trips through parseStoredValue", true);
+}
+
+// 11. Backward compat + junk: the key used to hold bare deck text.
+{
+  const legacy = parseStoredValue("4 Lightning Strike\n20 Mountain");
+  assert.deepStrictEqual(legacy, { v: 1, deck: "4 Lightning Strike\n20 Mountain" });
+  ok("legacy plain deck text parses as a v1 payload", true);
+  ok("empty / absent values parse to null",
+    parseStoredValue(null) === null && parseStoredValue("") === null && parseStoredValue("   ") === null);
+  ok("JSON without a usable deck is rejected",
+    parseStoredValue("{}") === null && parseStoredValue('{"deck":""}') === null
+    && parseStoredValue('{"deck":7}') === null);
+  const braced = parseStoredValue("{not json");
+  ok("malformed JSON falls back to plain text", braced && braced.deck === "{not json");
 }
 
 console.log(`\n${passed} share tests passed`);

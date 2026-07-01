@@ -67,17 +67,24 @@
         <div class="deck-actions">
           <button class="btn btn-gold" id="analyzeBtn">Analyze deck</button>
           <button class="btn btn-ghost" id="exampleBtn">Load example</button>
+          <button class="btn btn-ghost" id="clearBtn">Clear</button>
         </div>
         <div class="confidence">
-          <label for="confSel">Target confidence</label>
+          <label for="confSel">Target confidence
+            <button class="info-dot" id="confInfo" aria-label="What target confidence means" aria-expanded="false">i</button>
+          </label>
           <select id="confSel">
-            <option value="">Karsten — on curve (89 + MV)%</option>
-            <option value="0.90">Flat 90%</option>
-            <option value="0.95">Flat 95%</option>
-            <option value="0.99">Flat 99%</option>
+            <option value="">Recommended — stricter for bigger spells (Karsten 89+MV%)</option>
+            <option value="0.90">Relaxed — 90% for every spell</option>
+            <option value="0.95">Strict — 95% for every spell</option>
+            <option value="0.99">Very strict — 99% for every spell</option>
           </select>
+          <p class="why-note" id="confInfoNote" hidden>How reliably each spell should be castable on the turn
+            you'd play it — the per-color source requirements are sized to hit this chance, so a higher
+            confidence demands more lands of each color. The recommended setting follows Frank Karsten's
+            tables: (89 + mana value)%, so a 1-drop targets 90% and a 6-drop 95%.</p>
         </div>
-        <p class="hint" id="deckHint"></p>
+        <p class="hint" id="deckHint" aria-live="polite"></p>
       </section>
 
       <section class="dashboard">
@@ -106,7 +113,7 @@
 
         <!-- Sticky grade HUD: the overall grade follows you as you edit lands -->
         <div class="hud-grade" id="hudGrade" hidden>
-          <div class="overall" id="overallGrade">
+          <div class="overall" id="overallGrade" role="status">
             <span class="og-letter"></span>
             <span class="og-text"></span>
           </div>
@@ -213,16 +220,16 @@
       <div class="grid-head">
         <span id="gridCount">Loading lands…</span>
         <div class="grid-controls">
-          <div class="seg" id="landMode" role="group" aria-label="Which lands to show">
-            <button class="seg-btn" data-mode="suggested"
+          <div class="seg" id="landMode" role="radiogroup" aria-label="Which lands to show">
+            <button class="seg-btn" role="radio" aria-checked="false" data-mode="suggested"
               title="The lands the recommender would reach for in your colors — the same picks you'd get from Build manabase, narrowed down from the full pool.">Suggested</button>
-            <button class="seg-btn" data-mode="relevant">Relevant</button>
-            <button class="seg-btn" data-mode="mycolors">My colors</button>
-            <button class="seg-btn" data-mode="utility">Utility</button>
-            <button class="seg-btn on" data-mode="all">All</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-mode="relevant">Relevant</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-mode="mycolors">My colors</button>
+            <button class="seg-btn" role="radio" aria-checked="false" data-mode="utility">Utility</button>
+            <button class="seg-btn on" role="radio" aria-checked="true" data-mode="all">All</button>
           </div>
-          <button class="chip" id="raresToggle">Rares only</button>
-          <button class="chip chip-guide" id="suggestToggle" disabled
+          <button class="chip" id="raresToggle" aria-pressed="false">Rares only</button>
+          <button class="chip chip-guide" id="suggestToggle" disabled aria-pressed="false"
             title="Glow the lands that supply a color you're still short on — guidance, not a filter.">Highlight fixers</button>
           <input type="search" id="searchBox" placeholder="Search lands…" autocomplete="off" aria-label="Search lands">
           <select id="sortSel" aria-label="Sort lands">
@@ -252,10 +259,10 @@
         <button class="icon-btn" id="recClose" aria-label="Close">×</button>
       </div>
       <p class="rec-intro">Each option is a complete manabase. <strong>Battle-tested</strong> is picked by
-        simulating thousands of games of your deck; the others each optimize one goal. Hover an option to
-        see how it was built.</p>
-      <div class="rec-options" id="recOptions" role="group" aria-label="Optimal manabase options"></div>
-      <p class="drawer-sub" id="recSummary"></p>
+        simulating thousands of games of your deck; the others each optimize one goal.</p>
+      <div class="rec-options" id="recOptions" role="radiogroup" aria-label="Optimal manabase options"></div>
+      <p class="drawer-sub" id="recSummary" aria-live="polite"></p>
+      <p class="rec-how" id="recHow"></p>
       <div class="rec-list" id="recList"></div>
       <div class="drawer-foot">
         <button class="btn btn-gold" id="recApply">Apply to build</button>
@@ -270,7 +277,7 @@
         <h2 id="exportTitle">Export</h2>
         <button class="icon-btn" id="exportClose" aria-label="Close">×</button>
       </div>
-      <p class="drawer-sub" id="exportCopied"></p>
+      <p class="drawer-sub" id="exportCopied" aria-live="polite"></p>
       <textarea id="exportText" class="export-text" spellcheck="false" readonly></textarea>
       <div class="export-actions">
         <button class="btn btn-ghost" id="shareLinkBtn" type="button">Copy share link</button>

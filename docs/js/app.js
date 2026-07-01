@@ -11,6 +11,7 @@ import { loadLands, loadMeta, resolveDeck, loadExampleDeck, loadLandPopularity }
 import {
   encodeShare, decodeShare, UnsupportedShareError,
   clampLandCounts, coerceConf, clampCopyOverrides, sanitizeCostOverrides,
+  buildStatePayload, parseStoredValue,
 } from "./share.js";
 
 const STORAGE_KEY = "mtg_manabase_deck";
@@ -204,8 +205,10 @@ function tileFor(land) {
   }
   const stepper = el("div", "stepper");
   const minus = el("button", "step-btn"); minus.textContent = "−";
+  minus.setAttribute("aria-label", `Remove one ${land.name}`);
   const numEl = el("span", "step-n"); numEl.textContent = state.counts[land.name] || 0;
   const plus = el("button", "step-btn"); plus.textContent = "+";
+  plus.setAttribute("aria-label", `Add one ${land.name}`);
   minus.addEventListener("click", () => changeCount(land, -1));
   plus.addEventListener("click", () => changeCount(land, 1));
   stepper.append(minus, numEl, plus);
@@ -277,7 +280,9 @@ function applyVisibility() {
 function setLandMode(mode) {
   state.landMode = mode;
   for (const b of document.querySelectorAll("#landMode .seg-btn")) {
-    b.classList.toggle("on", b.dataset.mode === mode);
+    const on = b.dataset.mode === mode;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));   // the group is a radiogroup
   }
   applyVisibility();
 }
@@ -306,11 +311,13 @@ function changeCount(land, delta) {
   state.counts[land.name] = next;
   entry.numEl.textContent = next;
   state.previewCut = false;   // editing the build invalidates the previewed cut basis
+  clearUndo();                // a hand edit invalidates the pending Undo (it would clobber this)
   applyTileState(land, entry.el);
   refreshDashboard();
   refreshBuildList();
   markFixers();  // deficit highlight updates as the build changes
   gradeBuild();
+  saveLocal();
 }
 
 function applyTileState(land, tile) {
@@ -328,7 +335,11 @@ function markFixers() {
   // Reflect the effective state on the toggle so an auto-on glow reads as active
   // (and clickable to dismiss), not as an untouched control.
   const toggle = $("#suggestToggle");
-  if (toggle) toggle.classList.toggle("on", on && deficit.size > 0);
+  if (toggle) {
+    const active = on && deficit.size > 0;
+    toggle.classList.toggle("on", active);
+    toggle.setAttribute("aria-pressed", String(active));
+  }
 }
 
 function syncCountsToTiles() {
@@ -490,11 +501,13 @@ function changeSmooth(delta) {
   const next = Math.max(0, Math.min(card.qty, cur + delta));
   ov[card.name] = next;
   $("#smoothCountVal").textContent = next;
+  clearUndo();
   // Only cheap smoothers move the land target; diggers affect the sim only.
   if (_smoothPopKind === "smooth") {
     state.landTarget = recommendLandCount(state.avgMV, state.deckSize, smoothCount());
     updateLandPanel();
   }
+  saveLocal();
 }
 
 /* ---------- cost-override popover ---------- */
@@ -512,7 +525,9 @@ function openCostPop(spell, anchorEl) {
   pop.style.left = Math.min(window.innerWidth - 244, Math.max(6, r.left - 110)) + "px";
   pop.style.top = (r.bottom + 6) + "px";
   pop.hidden = false;
-  input.focus();
+  // preventScroll: a focus-induced scroll would instantly close the popover
+  // via the scroll-dismiss listener.
+  input.focus({ preventScroll: true });
   input.select();
 }
 // Live preview of what the entered cost parses to (MV + colored pips), so a typo
@@ -538,12 +553,14 @@ function applyCostPop() {
   if (raw) state.costOverrides[_costPopCard.name] = raw;
   else delete state.costOverrides[_costPopCard.name];
   $("#costPop").hidden = true;
+  clearUndo();
   recomputeFromCosts();
 }
 function resetCostPop() {
   if (!_costPopCard) return;
   delete state.costOverrides[_costPopCard.name];
   $("#costPop").hidden = true;
+  clearUndo();
   recomputeFromCosts();
 }
 
@@ -566,11 +583,23 @@ function positionPreview(x, y) {
 }
 function hidePreview() { $("#cardPreview").hidden = true; }
 
-/* ---------- modal drawers (focus return + Esc + backdrop close) ---------- */
+/* ---------- modal drawers (focus trap + return + Esc + backdrop close) ---------- */
 let _drawerOpener = null;
+let _inertSiblings = [];   // body children made inert while a dialog is open
 function openDrawer(drawerEl) {
   _drawerOpener = document.activeElement;
   drawerEl.hidden = false;
+  // Trap focus: everything else at the body level goes inert (unreachable by Tab
+  // and by screen readers) while the dialog is open. Skip already-hidden/inert
+  // siblings so close restores exactly what open changed. No-op without support.
+  if ("inert" in HTMLElement.prototype) {
+    _inertSiblings = [];
+    for (const sib of document.body.children) {
+      if (sib === drawerEl || sib.hidden || sib.inert || sib.tagName === "SCRIPT") continue;
+      sib.inert = true;
+      _inertSiblings.push(sib);
+    }
+  }
   // Move focus into the dialog so keyboard users land inside it, not behind it.
   const focusable = drawerEl.querySelector("button, [href], input, textarea, select");
   if (focusable) focusable.focus();
@@ -578,6 +607,8 @@ function openDrawer(drawerEl) {
 function closeDrawer(drawerEl) {
   if (drawerEl.hidden) return;
   drawerEl.hidden = true;
+  for (const sib of _inertSiblings) sib.inert = false;
+  _inertSiblings = [];
   if (_drawerOpener && _drawerOpener.focus) _drawerOpener.focus();  // restore focus to the trigger
   _drawerOpener = null;
 }
@@ -667,6 +698,121 @@ function recomputeFromCosts() {
   if (deckColors().size) { state.suggestedLands = null; computeSuggested(); }
   updateLandPanel();
   gradeBuild();
+  saveLocal();
+}
+
+/* ---------- session persistence (deck + build + tweaks) ---------- */
+// Persist the whole session — the same payload a v2 share link carries — so a
+// reload restores hand-tuned land counts and overrides, not just the deck text.
+// Called after every state change a share link would capture; best-effort.
+function saveLocal() {
+  const deck = state.lastImportedDeck || $("#deckText").value.trim();
+  if (!deck) return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(buildStatePayload({
+      deck, conf: state.threshold, lands: state.counts,
+      costOverrides: state.costOverrides,
+      smooth: state.smoothOverrides, dig: state.digOverrides,
+    })));
+  } catch { /* storage full or blocked — persistence is best-effort */ }
+}
+
+/* ---------- single-level undo for destructive build changes ---------- */
+// Two actions replace the build without asking: "Apply to build" and analyzing a
+// changed decklist (both wipe counts/overrides). Stash the prior build and offer
+// a transient Undo in the deck hint. One level only, and any unrelated edit
+// invalidates the stash so Undo can never clobber newer hand-tuning.
+let _undoStash = null;   // { counts, costOverrides, smoothOverrides, digOverrides } | { payload } (Clear)
+function stashUndo() {
+  _undoStash = {
+    counts: { ...state.counts },
+    costOverrides: { ...state.costOverrides },
+    smoothOverrides: { ...state.smoothOverrides },
+    digOverrides: { ...state.digOverrides },
+  };
+}
+function clearUndo() {
+  if (!_undoStash) return;
+  _undoStash = null;
+  $("#deckHint").querySelector(".hint-undo")?.remove();  // a dead Undo button would lie
+}
+// Append the Undo affordance to the deck hint; with `message`, replace the hint
+// text first (the hint is the app's status line, and it's a polite live region).
+function offerUndo(btnLabel = "Undo", message = null) {
+  const hint = $("#deckHint");
+  if (message != null) { hint.className = "hint"; hint.textContent = message; }
+  hint.querySelector(".hint-undo")?.remove();
+  hint.append(" ");
+  const btn = el("button", "hint-undo");
+  btn.type = "button";
+  btn.textContent = btnLabel;
+  btn.addEventListener("click", performUndo);
+  hint.appendChild(btn);
+}
+function performUndo() {
+  const s = _undoStash;
+  if (!s) return;
+  _undoStash = null;
+  if (s.payload) { applyPayload(s.payload); return; }  // deck-level undo (Clear): full re-analyze + restore
+  state.counts = { ...s.counts };
+  state.costOverrides = { ...s.costOverrides };
+  state.smoothOverrides = { ...s.smoothOverrides };
+  state.digOverrides = { ...s.digOverrides };
+  recomputeFromCosts();   // overrides feed requirements/spells/curve/land target (and saves)
+  syncCountsToTiles();
+  applyVisibility();
+  markFixers();
+  refreshDashboard();
+  gradeBuild();
+  const hint = $("#deckHint");
+  hint.className = "hint";
+  hint.textContent = "Previous build restored.";
+}
+
+// "Clear": empty the textarea, reset to the no-deck state, and forget the stored
+// session. The undo stash keeps the whole session as a payload, so an accidental
+// clear is one click back (restored through the same path as a share link).
+function clearDeck() {
+  const deck = state.lastImportedDeck || $("#deckText").value.trim();
+  if (deck) {
+    _undoStash = {
+      payload: buildStatePayload({
+        deck, conf: state.threshold, lands: state.counts,
+        costOverrides: state.costOverrides,
+        smooth: state.smoothOverrides, dig: state.digOverrides,
+      }),
+    };
+  } else clearUndo();
+  _analyzeRun++;                       // cancel any analyze in flight
+  $("#analyzeBtn").disabled = false;   // …which would otherwise own the re-enable
+  clearTimeout(_gradeTimer); clearTimeout(_simTimer);   // a late grade would re-show the HUD
+  $("#deckText").value = "";
+  state.counts = {};
+  state.resolvedCards = [];
+  state.qtyByName = {};
+  state.costOverrides = {}; state.smoothOverrides = {}; state.digOverrides = {};
+  state.lastImportedDeck = null;
+  state.deckSize = 60;
+  state.suggest = null;
+  state.previewCut = false;
+  state.suggestedLands = null;
+  rebuildFromCosts();                  // re-derives everything from the (now empty) deck
+  state.landTarget = null;             // no deck, no recommended count
+  syncCountsToTiles();
+  setLandMode("all");
+  renderSpellStrip();                  // no spells: hides the strip + grade HUD
+  refreshDashboard();
+  markFixers();
+  updateLandPanel();
+  populateDrawTool();
+  $("#dashEmpty").hidden = false;
+  $("#deckStatus").textContent = "No deck loaded";
+  $("#recommendBtn").disabled = true;
+  $("#suggestToggle").disabled = true;
+  $("#exportBtn").disabled = true;
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* best-effort */ }
+  if (_undoStash) offerUndo("Undo", "Cleared the deck and build.");
+  else { const hint = $("#deckHint"); hint.className = "hint"; hint.textContent = ""; }
 }
 
 /* ---------- deck analysis (all local) ---------- */
@@ -679,6 +825,8 @@ async function analyzeDeck() {
   if (!text) { hint.textContent = "Paste a decklist first."; hint.className = "hint warn"; return; }
   hint.textContent = "Analyzing…"; hint.className = "hint";
   const run = ++_analyzeRun;
+  const analyzeBtn = $("#analyzeBtn");
+  analyzeBtn.disabled = true;   // one analyze at a time; re-enabled in finally
   try {
     const entries = deckEntries(parseDeckText(text), "deck");
     const qtyByInput = {};
@@ -701,6 +849,11 @@ async function analyzeDeck() {
 
     state.deckSize = deckSize || 60;
     const newDeck = text !== state.lastImportedDeck;
+    // A changed deck wipes the counts/overrides below with no warning — stash the
+    // build first (when there is one) so the hint can offer Undo afterwards.
+    const undoable = newDeck && state.lastImportedDeck != null &&
+      (Object.values(state.counts).some((n) => n > 0) || Object.keys(state.costOverrides).length > 0);
+    if (undoable) stashUndo(); else if (newDeck) clearUndo();
     // Reset per-card overrides on a new deck (so a previous deck's tweaks don't leak).
     if (newDeck) { state.smoothOverrides = {}; state.digOverrides = {}; state.costOverrides = {}; }
 
@@ -725,7 +878,7 @@ async function analyzeDeck() {
       syncCountsToTiles();
     }
 
-    localStorage.setItem(STORAGE_KEY, text);
+    saveLocal();
     $("#dashEmpty").hidden = true;
     // One orchestrated beat: the five color rows ignite in WUBRG order on analyze.
     const colorsWrap = $("#colors");
@@ -758,6 +911,7 @@ async function analyzeDeck() {
     }
     const dc = digCount();
     if (dc) parts.push(`${dc} mid-cost card-advantage spell${dc === 1 ? "" : "s"} (+) help the simulation reach lands for your expensive spells (no change to the land count).`);
+    if (state.spells.length) parts.push(`A card's ✎ sets the cost you'll actually pay (kicker, X, an alternative cost).`);
     if (state.conditionsActive.size) parts.push(`Conditional lands active for: ${[...state.conditionsActive].join(", ")}.`);
     if (landsOutsidePool) parts.push(`${landsOutsidePool} land(s) not in the Standard pool.`);
     if (missing.length) {
@@ -767,9 +921,14 @@ async function analyzeDeck() {
     }
     hint.className = "hint";
     hint.textContent = parts.join(" ");
+    if (undoable) offerUndo("Restore previous build");   // the analyze replaced a hand-tuned build
   } catch (e) {
     if (run !== _analyzeRun) return;  // a stale failure shouldn't clobber a newer run's hint
     hint.textContent = "Couldn't analyze: " + e.message; hint.className = "hint warn";
+  } finally {
+    // Only the newest run owns the button — a superseded run must not re-enable
+    // it under the one still in flight.
+    if (run === _analyzeRun) analyzeBtn.disabled = false;
   }
 }
 
@@ -1215,6 +1374,7 @@ async function computeAllRecs() {
   $("#recList").innerHTML = "";
   renderAdvice(null);
   $("#recSummary").textContent = "Working out your options…";
+  $("#recHow").textContent = "";
 
   try {
     // The ILP options and the sim-in-the-loop "Battle-tested" pick run in parallel;
@@ -1292,7 +1452,9 @@ function renderRecOptions(options) {
   options.forEach((opt, i) => {
     const btn = el("button", "rec-option");
     btn.dataset.i = i;
-    btn.title = recOptionTip(opt);   // hover: how this build was chosen
+    btn.setAttribute("role", "radio");            // pick-one within the radiogroup
+    btn.setAttribute("aria-checked", "false");    // selectRecOption keeps this in sync
+    btn.title = recOptionTip(opt);   // hover: how this build was chosen (also shown in #recHow)
     // Battle-tested carries its simulated on-curve castability and a "simulated"
     // badge; the ILP options show the land-count / tapped tradeoff they optimize for.
     const stat = opt.sim
@@ -1350,8 +1512,12 @@ function selectRecOption(i) {
   const opt = state.recOptions[i];
   if (!opt) return;
   for (const b of document.querySelectorAll("#recOptions .rec-option")) {
-    b.classList.toggle("on", Number(b.dataset.i) === i);
+    const on = Number(b.dataset.i) === i;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
   }
+  // "How this build was chosen", visibly — the title tooltip alone is invisible on touch.
+  $("#recHow").textContent = recOptionTip(opt);
   // Battle-tested is selected by simulation, not by a single ILP goal, so it gets
   // its own note (the simulated castability it was chosen on, plus any ILP goals it
   // coincides with — so a collapsed single option isn't a mystery).
@@ -1372,6 +1538,10 @@ function recommend() {
 
 function applyRecommendation() {
   if (!state.lastRec) return;
+  // Apply replaces the build wholesale — stash the old one so Undo can bring it back.
+  const prevTotal = tally().total;
+  const undoable = prevTotal > 0;
+  if (undoable) stashUndo(); else clearUndo();
   state.counts = {};
   for (const p of state.lastRec) state.counts[p.name] = p.count;
   closeDrawer($("#recDrawer"));
@@ -1380,6 +1550,10 @@ function applyRecommendation() {
   markFixers();
   refreshDashboard();
   gradeBuild();
+  saveLocal();
+  if (undoable) {
+    offerUndo("Undo", `Recommended manabase applied — it replaced your previous ${prevTotal}-land build.`);
+  }
 }
 
 /* ---------- export & share ---------- */
@@ -1484,11 +1658,11 @@ function exportAnalysisJSON() {
 async function copyShareLink() {
   const deck = state.lastImportedDeck || $("#deckText").value.trim();
   if (!deck) { $("#exportCopied").textContent = "Analyze a deck first."; return; }
-  const payload = {
-    v: 2, deck, conf: state.threshold, lands: { ...state.counts },
-    costOverrides: { ...state.costOverrides },
-    smooth: { ...state.smoothOverrides }, dig: { ...state.digOverrides },
-  };
+  const payload = buildStatePayload({
+    deck, conf: state.threshold, lands: state.counts,
+    costOverrides: state.costOverrides,
+    smooth: state.smoothOverrides, dig: state.digOverrides,
+  });
   const url = location.origin + location.pathname + "#" + (await encodeShare(payload));
   $("#exportText").value = url;
   navigator.clipboard?.writeText(url).then(
@@ -1521,6 +1695,14 @@ async function loadFromShareLink() {
     }
     return false;
   }
+  return applyPayload(payload);
+}
+
+// Apply a decoded/stored session payload: deck text + confidence, analyze, then
+// the per-card tweaks and the exact saved build. Shared by share links, the
+// localStorage restore, and the Clear undo — every field is sanitized because
+// none of those sources is more trustworthy than a pasted URL.
+async function applyPayload(payload) {
   if (!payload || typeof payload.deck !== "string" || !payload.deck) return false;
   $("#deckText").value = payload.deck;
   const conf = coerceConf(payload.conf, CONF_VALUES);
@@ -1537,8 +1719,8 @@ async function loadFromShareLink() {
   if (Object.keys(cost).length || Object.keys(smooth).length || Object.keys(dig).length) {
     recomputeFromCosts();
   }
-  // Apply the shared custom build after analyze (analyze seeds counts from the
-  // deck's own lands; this overrides with the exact shared manabase). Counts are
+  // Apply the saved custom build after analyze (analyze seeds counts from the
+  // deck's own lands; this overrides with the exact saved manabase). Counts are
   // clamped to known lands at legal quantities.
   const counts = clampLandCounts(payload.lands, (name) => state.tiles.get(name)?.land || null);
   if (Object.keys(counts).length) {
@@ -1549,6 +1731,7 @@ async function loadFromShareLink() {
     refreshDashboard();
     gradeBuild();
   }
+  saveLocal();   // the restored build (not just its deck text) becomes the stored session
   return true;
 }
 
@@ -1670,8 +1853,11 @@ async function boot() {
   let handled = false;
   try { handled = await loadFromShareLink(); } catch { handled = false; }
   if (!handled) {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) { $("#deckText").value = saved; analyzeDeck(); }
+    // The stored session: a full payload (deck + build + tweaks), or — from
+    // before this schema — the bare deck text. Both restore through applyPayload.
+    let saved = null;
+    try { saved = parseStoredValue(localStorage.getItem(STORAGE_KEY)); } catch { saved = null; }
+    if (saved) applyPayload(saved);
   }
 }
 
@@ -1687,6 +1873,7 @@ function wireEvents() {
     $("#deckText").value = await loadExampleDeck();
     analyzeDeck();
   });
+  $("#clearBtn").addEventListener("click", clearDeck);
   $("#recommendBtn").addEventListener("click", recommend);
   $("#recOptions").addEventListener("click", (e) => {
     const btn = e.target.closest(".rec-option");
@@ -1721,6 +1908,7 @@ function wireEvents() {
   $("#raresToggle").addEventListener("click", (e) => {
     state.raresOnly = !state.raresOnly;
     e.target.classList.toggle("on", state.raresOnly);
+    e.target.setAttribute("aria-pressed", String(state.raresOnly));
     applyVisibility();
   });
   $("#landMode").addEventListener("click", (e) => {
@@ -1734,6 +1922,11 @@ function wireEvents() {
   });
   $("#landWhy").addEventListener("click", (e) => {
     const note = $("#landWhyNote");
+    note.hidden = !note.hidden;
+    e.currentTarget.setAttribute("aria-expanded", String(!note.hidden));
+  });
+  $("#confInfo").addEventListener("click", (e) => {
+    const note = $("#confInfoNote");
     note.hidden = !note.hidden;
     e.currentTarget.setAttribute("aria-expanded", String(!note.hidden));
   });
@@ -1766,6 +1959,14 @@ function wireEvents() {
       cp.hidden = true;
     }
   });
+  // …and on any scroll: they're position:fixed and anchored to a card, so
+  // scrolling would leave them floating over the wrong thing. Capture phase
+  // catches inner scrollable containers too.
+  window.addEventListener("scroll", () => {
+    const pop = $("#smoothPop"), cp = $("#costPop");
+    if (!pop.hidden) pop.hidden = true;
+    if (!cp.hidden) cp.hidden = true;
+  }, { passive: true, capture: true });
   $("#confSel").addEventListener("change", (e) => {
     state.threshold = e.target.value ? parseFloat(e.target.value) : null;
     if ($("#deckText").value.trim()) analyzeDeck();
