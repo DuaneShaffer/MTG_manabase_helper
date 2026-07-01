@@ -51,8 +51,13 @@ def _get(url, params=None, _attempts=5):
         resp = requests.get(url, params=params, headers=_HEADERS, timeout=30)
         if resp.status_code == 429 and attempt < _attempts - 1:
             # Rate limited — back off (honor Retry-After if given) and retry.
-            wait = float(resp.headers.get("Retry-After", 1.5)) + 0.5 * attempt
-            time.sleep(wait)
+            # Retry-After may be an HTTP-date instead of seconds; fall back to
+            # a fixed delay when it isn't a plain number.
+            try:
+                retry_after = float(resp.headers.get("Retry-After", 1.5))
+            except (TypeError, ValueError):
+                retry_after = 1.5
+            time.sleep(retry_after + 0.5 * attempt)
             continue
         resp.raise_for_status()
         return resp.json()

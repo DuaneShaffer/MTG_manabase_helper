@@ -1,6 +1,6 @@
-# Runtime — the Python side (core/, mtg_test.py CLI, scripts/build_data.py).
+# Runtime — the Python data pipeline (core/ + scripts/build_data.py).
 # The web app in docs/ is fully static and needs no Python at runtime.
-requests>=2.28        # Scryfall fetch (CLI + data build)
+requests>=2.28        # Scryfall fetch (data build)
 
 # Development
 pytest>=7.0

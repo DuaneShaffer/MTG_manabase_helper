@@ -92,6 +92,10 @@ def analyze_land_colors(card):
                       cycle: "{T}: Add {B}. Activate only if you control an Island
                       or a Swamp."). Real only if the build supplies those types.
     ``type_gate``   — the basic land types that enable ``type_gated`` colors.
+    ``unknown_gated`` — colors behind an "Activate only if" gate we can't map to
+                      a basic land or basic land type (e.g. "only if you control
+                      a Gate"). Conservative: these must NOT ship as reliable
+                      fixing, since we can't tell when the gate is met.
 
     Scryfall's ``produced_mana`` over-reports (it lists every color a land *can*
     make, however restricted/costly), so we parse the abilities instead.
@@ -101,16 +105,17 @@ def analyze_land_colors(card):
     # into a basic land of a chosen type, so they fix any one color — a flexible
     # five-color source, like Starting Town / a painland.
     if "choose a basic land type" in low and "the chosen type" in low:
-        return sorted("WUBRG"), [], None, [], [], False
+        return sorted("WUBRG"), [], None, [], [], False, []
     produced = set(card.get("produced_mana") or []) & set("WUBRG")
     type_line = card.get("type_line", "") or ""
     if not produced:
-        return [], [], None, [], [], False
+        return [], [], None, [], [], False, []
     if any(t in type_line for t in _BASIC_TYPES):
-        return sorted(produced), [], None, [], [], False  # typed land — genuine fixing
+        return sorted(produced), [], None, [], [], False, []  # typed land — genuine fixing
 
     reliable, conditional, condition = set(), set(), None
     type_gated, type_gate = set(), set()
+    unknown_gated = set()
     needs_basic = False
     for line in _oracle(card).split("\n"):
         low = line.lower()
@@ -148,22 +153,30 @@ def analyze_land_colors(card):
             conditional |= colors
             condition = condition or m.group(1).replace(" spell", "").strip()
         elif gate is not None:
-            type_gated |= colors
             if "basic land" in gate:
+                type_gated |= colors
                 needs_basic = True
             else:
-                for t in _BASIC_TYPES:
-                    if t.lower() in gate:
-                        type_gate.add(t)
+                matched = {t for t in _BASIC_TYPES if t.lower() in gate}
+                if matched:
+                    type_gated |= colors
+                    type_gate |= matched
+                else:
+                    # An "Activate only if ..." gate we don't recognize (not a
+                    # basic land / basic type). Be conservative: these colors
+                    # must not fold into the reliable pool — track them apart.
+                    unknown_gated |= colors
         else:
             reliable |= colors
     return (sorted(reliable), sorted(conditional - reliable), condition,
-            sorted(type_gated - reliable), sorted(type_gate), needs_basic)
+            sorted(type_gated - reliable), sorted(type_gate), needs_basic,
+            sorted(unknown_gated - reliable))
 
 
 def slim_land(card):
     uris = _uris(card)
-    reliable, cond_colors, condition, gated_colors, type_gate, needs_basic = analyze_land_colors(card)
+    (reliable, cond_colors, condition, gated_colors, type_gate, needs_basic,
+     unknown_gated) = analyze_land_colors(card)
     out = {
         "name": card["name"],
         "type": card.get("type_line", ""),
@@ -190,6 +203,12 @@ def slim_land(card):
     if gated_colors and needs_basic:
         out["gatedColors"] = gated_colors
         out["needsBasic"] = True
+    # Colors behind an activation gate we couldn't classify: ship them in a
+    # flagged field, NOT in `colors` — the app treats the land as a colorless
+    # source rather than crediting fixing whose condition it can't evaluate.
+    unknown_only = [c for c in unknown_gated if c not in out["colors"]]
+    if unknown_only:
+        out["unknownGated"] = unknown_only
     # Basic-fetch lands (Fabled Passage, Escape Tunnel): sacrifice to search up a
     # basic. They fix any color you run basics for, but the fetched land enters
     # tapped, so model them as a slow (tapped) flexible source.
@@ -262,9 +281,13 @@ def _smooths(card):
         return False
     type_line = card.get("type_line", "") or ""
     oracle = _oracle(card).lower()
-    if "Land" not in type_line.split("—")[0] and card.get("produced_mana"):
+    is_land_card = "Land" in type_line.split("—")[0]
+    if not is_land_card and card.get("produced_mana"):
         return True  # mana dork / rock
-    if "search your library for" in oracle and "land" in oracle:
+    # Fetch *lands* (Evolving Wilds) are lands, not smoothers — a land can't
+    # trim the land count. Their fetching is modeled on the land side
+    # (`slim_land`'s `fetch` flag), so exclude lands here like the ramp branch.
+    if not is_land_card and "search your library for" in oracle and "land" in oracle:
         return True  # cheap land ramp / fetch
     # Card draw / selection only smooths your early game if you get it on demand — from
     # casting the card (a cantrip or ETB), a static ability, or an activated ability you
@@ -308,26 +331,88 @@ def slim_card(card):
     }
 
 
-def main():
-    OUT.mkdir(parents=True, exist_ok=True)
+# ---------------------------------------------------------------------------
+# output validation — sanity floors so a bad/partial Scryfall response can
+# never ship a skewed snapshot (the workflow commits whatever this writes).
+# Real counts as of mid-2026: ~268 lands, ~4700 cards.
+# ---------------------------------------------------------------------------
+MIN_LANDS = 200
+MIN_CARDS = 3000
+MIN_COLOR_OR_FETCH_FRACTION = 0.90
+LAND_KEYS = ("name", "type", "rarity", "colors", "image", "image_hi", "basic", "tapped")
+CARD_KEYS = ("name", "cost", "type", "image", "smooth", "fetch")
 
+
+def validate_data(lands, cards):
+    """Assert the built snapshot is sane; raise SystemExit (non-zero) if not."""
+    problems = []
+    if len(lands) < MIN_LANDS:
+        problems.append("only {} lands (floor {})".format(len(lands), MIN_LANDS))
+    if len(cards) < MIN_CARDS:
+        problems.append("only {} cards (floor {})".format(len(cards), MIN_CARDS))
+
+    for land in lands:
+        missing = [k for k in LAND_KEYS if k not in land]
+        if missing:
+            problems.append("land {!r} missing keys: {}".format(
+                land.get("name", "<unnamed>"), ", ".join(missing)))
+            break  # one representative failure is enough
+    for card in cards.values():
+        missing = [k for k in CARD_KEYS if k not in card]
+        if missing:
+            problems.append("card {!r} missing keys: {}".format(
+                card.get("name", "<unnamed>"), ", ".join(missing)))
+            break
+
+    if lands:
+        useful = sum(1 for l in lands if l.get("colors") or l.get("fetch"))
+        frac = useful / len(lands)
+        if frac < MIN_COLOR_OR_FETCH_FRACTION:
+            problems.append(
+                "only {:.0%} of lands have colors or a fetch flag (floor {:.0%})".format(
+                    frac, MIN_COLOR_OR_FETCH_FRACTION))
+
+    if problems:
+        raise SystemExit("build_data validation FAILED — not writing output:\n  "
+                         + "\n  ".join(problems))
+
+
+def write_outputs(lands, cards, meta):
+    """Write the three JSONs atomically: all to temp files first, then rename
+    into place only once every dump has succeeded — a mid-build failure can't
+    leave docs/data/ with a fresh lands.json next to a stale cards.json."""
+    OUT.mkdir(parents=True, exist_ok=True)
+    payloads = [("lands.json", lands), ("cards.json", cards), ("meta.json", meta)]
+    tmps = []
+    try:
+        for name, data in payloads:
+            tmp = OUT / (name + ".tmp")
+            with open(tmp, "w") as fh:
+                json.dump(data, fh, separators=(",", ":"))
+            tmps.append((tmp, OUT / name))
+        for tmp, final in tmps:
+            os.replace(tmp, final)
+    finally:
+        for tmp, _final in tmps:
+            if tmp.exists():
+                tmp.unlink()
+
+
+def main():
     raw_lands = scryfall.standard_lands(force_refresh=True)
     lands = [slim_land(c) for c in land_mod.unique_lands(raw_lands)]
-    with open(OUT / "lands.json", "w") as fh:
-        json.dump(lands, fh, separators=(",", ":"))
 
     all_cards = scryfall._search_all("legal:standard " + scryfall.legality_cutoff(), unique="cards")
     cards = {c["name"].lower(): slim_card(c) for c in all_cards}
-    with open(OUT / "cards.json", "w") as fh:
-        json.dump(cards, fh, separators=(",", ":"))
+
+    validate_data(lands, cards)
 
     meta = {
-        "generated": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%MZ"),
+        "generated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
         "lands": len(lands),
         "cards": len(cards),
     }
-    with open(OUT / "meta.json", "w") as fh:
-        json.dump(meta, fh)
+    write_outputs(lands, cards, meta)
 
     print("wrote {} lands, {} cards ({})".format(len(lands), len(cards), meta["generated"]))
 

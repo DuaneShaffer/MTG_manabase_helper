@@ -31,20 +31,20 @@ The app is the static `docs/` folder. To preview it:
 cd docs && python3 -m http.server      # then open http://localhost:8000
 ```
 
-There's also a Python CLI and reference implementation:
+To run the tests (Python 3, `pip install -r requirements.txt`):
 
 ```bash
-./bin/python mtg_test.py example_deck.txt --recommend   # per-color requirements + a suggested base
-./bin/python -m pytest tests/ -q                        # tests
+python -m pytest tests/ -q                        # the data-pipeline tests
+for f in docs/js/tests/*.test.js; do node "$f"; done   # the app's math/deck/sim tests
 ```
 
 ## How it's built
 
 A fully static client-side app (vanilla ES modules in `docs/js/`) with a committed snapshot of
 Scryfall card data under `docs/data/` — so end users never hit Scryfall's API (card images
-hotlink its CDN, which Scryfall permits). A GitHub Action refreshes that snapshot weekly. A
-parallel Python implementation in `core/` powers the CLI and the data build and serves as the
-tested reference for the JavaScript.
+hotlink its CDN, which Scryfall permits). A GitHub Action refreshes that snapshot weekly via
+the Python data pipeline (`scripts/build_data.py` + `core/`), which validates the snapshot
+before anything ships.
 
 ## License
 

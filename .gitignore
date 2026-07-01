@@ -13,12 +13,8 @@ standard_mtg_cards.json
 lands_data.json
 example_deck_data.json
 
-# Local virtualenv (present in the working dir; never tracked)
-/bin/
-/include/
-/lib/
-/lib64/
-/pyvenv.cfg
+# Local virtualenv (never tracked)
+.venv/
 
 # Top-level markdown (working/planning docs) — kept out of the repo
 /*.md
@@ -151,16 +147,12 @@ dmypy.json
 
 #Helper folders
 mtg_manabase_pngs/
-bin/
 
 #JSON Files
 *.json
 
 #Config files
 *.cfg
-
-#Not sure
-lib64
 
 # Re-include JSON that MUST be committed despite the broad *.json rule above:
 #  - the static site's committed Scryfall snapshot

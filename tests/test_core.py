@@ -1,23 +1,24 @@
-"""Tests for the pure-logic core (parser, requirements, lands, dedup).
+"""Tests for the Python data pipeline (core helpers + scripts/build_data.py).
 
 Run with:  python -m pytest        (from the repo root)
 
-These use small inline fixtures rather than the multi-MB Scryfall dumps, except
-for one slower end-to-end test that loads the real Standard data if present.
+The manabase math lives in the JS app (docs/js/) and is guarded by its own test
+suite (docs/js/tests/); this file covers only the surviving Python surface: the
+land identification/dedup helpers and the Scryfall snapshot builder.
 """
 
-import json
 import os
 import sys
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 
-from core import carddb, decklist, hypergeometric, lands, recommend, requirements
+import build_data
+from core import lands
 from core.util import list_of_seq_unique_by_key
-
-FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "example_deck_cards.json")
 
 
 # --------------------------------------------------------------------------
@@ -30,134 +31,7 @@ def test_unique_by_key_keeps_first():
 
 
 # --------------------------------------------------------------------------
-# decklist parser (#3)
-# --------------------------------------------------------------------------
-SAMPLE_DECK = """Deck
-1 Island (THB) 251
-4 Adarkar Wastes (DMU) 243
-2 Teferi, Who Slows the Sunset (MID) 245
-
-Sideboard
-1 Negate (RIX) 44
-"""
-
-
-def test_parse_quantities_and_multiword_names():
-    entries = decklist.parse_decklist_text(SAMPLE_DECK)
-    teferi = [e for e in entries if e.name == "Teferi, Who Slows the Sunset"]
-    assert len(teferi) == 1
-    assert teferi[0].qty == 2
-    assert teferi[0].set == "MID"
-    assert teferi[0].collector == "245"
-
-
-def test_parse_sections():
-    entries = decklist.parse_decklist_text(SAMPLE_DECK)
-    assert {e.name for e in decklist.deck_entries(entries, "deck")} == {
-        "Island", "Adarkar Wastes", "Teferi, Who Slows the Sunset",
-    }
-    assert [e.name for e in decklist.deck_entries(entries, "sideboard")] == ["Negate"]
-
-
-def test_parse_skips_headers_and_blanks():
-    # "Deck"/"Sideboard"/blank lines must not become cards.
-    names = [e.name for e in decklist.parse_decklist_text(SAMPLE_DECK)]
-    assert "Deck" not in names and "" not in names
-
-
-def test_parse_bare_quantity_name():
-    entries = decklist.parse_decklist_text("3 Llanowar Elves")
-    assert entries[0].qty == 3 and entries[0].name == "Llanowar Elves"
-    assert entries[0].set is None
-
-
-def test_card_names_dedupes_preserving_order():
-    entries = decklist.parse_decklist_text("1 A (X) 1\n1 B (X) 2\n1 A (X) 3")
-    assert decklist.card_names(entries) == ["A", "B"]
-
-
-# --------------------------------------------------------------------------
-# requirements (#4)
-# --------------------------------------------------------------------------
-def test_karsten_shape_mono():
-    # {1}{W}{W} -> white needs the '1CC' slot (18), not gold.
-    shape, gold = requirements.karsten_shape("{1}{W}{W}", "W")
-    assert shape == "1CC" and gold is False
-    assert requirements.FRANK_RECOMMENDATION["1CC"] == 18
-
-
-def test_karsten_shape_gold_adds_pressure():
-    # {1}{W}{U} for white: the U pip counts as generic and marks it gold.
-    shape, gold = requirements.karsten_shape("{1}{W}{U}", "W")
-    assert shape == "2C" and gold is True
-
-
-def test_requirements_gold_plus_one():
-    reqs = requirements.requirements_for_costs(["{1}{W}{U}"])
-    # '2C' base is 12; gold adds +1 for each color.
-    assert reqs["W"] == 13 and reqs["U"] == 13
-    assert reqs["B"] == 0
-
-
-def test_requirements_takes_max_across_cards():
-    reqs = requirements.requirements_for_costs(["{W}", "{W}{W}{W}"])
-    # 'C'=14, 'CCC'=23 -> max is 23.
-    assert reqs["W"] == 23
-
-
-def test_requirements_ignores_empty_and_colorless():
-    reqs = requirements.requirements_for_costs(["", "{3}", "{C}"])
-    assert all(v == 0 for v in reqs.values())
-
-
-# --- token parser fixes (vs the old char-by-char parser) ------------------
-def test_parse_multi_digit_generic():
-    # {10}{W} -> generic 10, one white pip. Old parser read "10" as 1+0=1.
-    generic, colored, hybrid = requirements.parse_cost("{10}{W}")
-    assert generic == 10 and colored["W"] == 1 and hybrid == []
-    assert requirements.karsten_shape("{10}{W}", "W") == ("10C", False)
-
-
-def test_colorless_pip_is_not_gold():
-    # {C}{W} for white: the colorless pip is generic pressure, not multicolor.
-    shape, gold = requirements.karsten_shape("{C}{W}", "W")
-    assert shape == "1C" and gold is False
-
-
-def test_hybrid_two_color_pip():
-    # {W/U} is payable by either color: no hard color, one hybrid pair, MV 1.
-    assert requirements.colors_in_cost("{W/U}") == set()
-    generic, colored, hybrid = requirements.parse_cost("{1}{W/U}")
-    assert generic == 1 and all(v == 0 for v in colored.values())
-    assert hybrid == [["W", "U"]]
-    assert requirements.mana_value("{1}{W/U}") == 2  # one generic + one hybrid
-
-
-def test_twobrid_and_phyrexian_fold_to_generic():
-    # {2/W} (pay 2 generic OR one W) -> generic 2, no color pressure, MV 2.
-    generic, colored, hybrid = requirements.parse_cost("{2/W}")
-    assert generic == 2 and hybrid == [] and all(v == 0 for v in colored.values())
-    assert requirements.mana_value("{2/W}") == 2
-    # {W/P} (Phyrexian, payable with life) -> generic 1, MV 1.
-    generic, colored, hybrid = requirements.parse_cost("{W/P}")
-    assert generic == 1 and hybrid == [] and all(v == 0 for v in colored.values())
-
-
-def test_hybrid_leans_on_invested_color():
-    # A deck already heavy in white casts a {W/U} card off white -- so the hybrid
-    # adds white pressure (already supported) and demands no blue sources.
-    reqs = requirements.requirements_for_costs(["{W}{W}{W}", "{W}{W}", "{W/U}{W/U}"])
-    assert reqs["U"] == 0
-    assert reqs["W"] > 0
-
-
-def test_variable_x_is_zero():
-    generic, _colored, _hybrid = requirements.parse_cost("{X}{X}{R}")
-    assert generic == 0
-
-
-# --------------------------------------------------------------------------
-# lands (#5, #2)
+# lands
 # --------------------------------------------------------------------------
 def _land(name, produced, type_line="Land", **extra):
     base = {
@@ -201,149 +75,6 @@ def test_tally_sources():
     assert tally["total"] == 6
 
 
-# --------------------------------------------------------------------------
-# carddb (#3/#4 bridge)
-# --------------------------------------------------------------------------
-def test_cards_by_names_prefers_latest_printing():
-    data = [
-        {"name": "Shock", "released_at": "2017-01-01", "v": "old"},
-        {"name": "Shock", "released_at": "2022-01-01", "v": "new"},
-        {"name": "Other", "released_at": "2020-01-01", "v": "x"},
-    ]
-    out = carddb.cards_by_names(data, ["Shock"])
-    assert len(out) == 1 and out[0]["v"] == "new"
-
-
-# --------------------------------------------------------------------------
-# hypergeometric engine (live source-count model)
-# --------------------------------------------------------------------------
-def test_hypergeometric_reproduces_karsten_table():
-    # 13 of 14 canonical 60-card cells match exactly; the turn-1 single pip is
-    # the one documented soft spot, so we allow ±2 only there.
-    cells = [
-        (1, 1, "C"), (1, 2, "1C"), (1, 3, "2C"), (2, 2, "CC"), (2, 3, "1CC"),
-        (2, 4, "2CC"), (3, 3, "CCC"), (3, 4, "1CCC"), (4, 4, "CCCC"),
-    ]
-    for pips, mv, key in cells:
-        calc = hypergeometric.sources_needed(pips, mv)
-        table = requirements.FRANK_RECOMMENDATION[key]
-        tolerance = 2 if key == "C" else 0
-        assert abs(calc - table) <= tolerance, (key, calc, table)
-
-
-def test_sliding_threshold():
-    assert hypergeometric.threshold_for(1) == 0.90
-    assert hypergeometric.threshold_for(3) == 0.92
-    assert hypergeometric.threshold_for(20) == hypergeometric.THRESHOLD_CAP  # clamped
-
-
-def test_flat_threshold_needs_more_sources():
-    sliding = hypergeometric.sources_needed(2, 3)               # ~0.92 target
-    flat95 = hypergeometric.sources_needed(2, 3, threshold=0.95)
-    assert flat95 > sliding
-
-
-def test_smaller_deck_needs_fewer_sources():
-    assert hypergeometric.sources_needed(1, 1, deck_size=40) < hypergeometric.sources_needed(1, 1, deck_size=60)
-
-
-def test_castable_probability_monotonic_and_graded():
-    p_low = hypergeometric.castable_probability(2, 3, sources=10)
-    p_high = hypergeometric.castable_probability(2, 3, sources=18)
-    assert 0 <= p_low < p_high <= 1
-
-
-def test_hypergeom_at_least_goldens():
-    # ~40% to open at least one of a 4-of in 60; ~98% to open a land in a 25-land deck.
-    assert hypergeometric.hypergeom_at_least(60, 4, 7, 1) == pytest.approx(0.3994996257446656)
-    assert hypergeometric.hypergeom_at_least(60, 25, 7, 1) == pytest.approx(0.9825882974857105)
-    assert hypergeometric.draw_odds_by_turn(60, 4, 2, 4, True) == pytest.approx(0.12578055307760927)
-
-
-def test_hypergeom_at_least_edges():
-    assert hypergeometric.hypergeom_at_least(60, 4, 7, 0) == 1.0   # k=0 -> certain
-    assert hypergeometric.hypergeom_at_least(60, 3, 7, 4) == 0.0   # k > successes
-    assert hypergeometric.hypergeom_at_least(40, 20, 3, 4) == 0.0  # k > sample
-
-
-def test_hypergeom_at_least_monotonic():
-    assert hypergeometric.hypergeom_at_least(60, 8, 7, 1) > hypergeometric.hypergeom_at_least(60, 4, 7, 1)
-    assert hypergeometric.draw_odds_by_turn(60, 4, 1, 6) > hypergeometric.draw_odds_by_turn(60, 4, 1, 2)
-    assert hypergeometric.draw_odds_by_turn(60, 4, 1, 3, False) > hypergeometric.draw_odds_by_turn(60, 4, 1, 3, True)
-    assert hypergeometric.grade(0.97)[0] == "A"
-    assert hypergeometric.grade(0.5)[0] == "F"
-    assert hypergeometric.castable_probability(0, 3, sources=0) == 1.0  # no pips → trivially castable
-
-
-def test_engine_is_cached():
-    hypergeometric.sources_needed.cache_clear()
-    hypergeometric.sources_needed(2, 3)
-    hypergeometric.sources_needed(2, 3)
-    info = hypergeometric.sources_needed.cache_info()
-    assert info.hits >= 1
-
-
-# --------------------------------------------------------------------------
-# recommender (#9)
-# --------------------------------------------------------------------------
-def test_recommender_meets_requirements_with_basics():
-    plains = {"name": "Plains", "produced_mana": ["W"], "type_line": "Basic Land — Plains"}
-    island = {"name": "Island", "produced_mana": ["U"], "type_line": "Basic Land — Island"}
-    rec = recommend.recommend({"W": 10, "U": 6, "B": 0, "R": 0, "G": 0}, [plains, island])
-    assert rec["met"]["W"] and rec["met"]["U"]
-    assert rec["shortfall"] == {}
-    assert rec["sources"]["W"] >= 10 and rec["sources"]["U"] >= 6
-
-
-def test_recommender_prefers_duals_over_basics():
-    plains = {"name": "Plains", "produced_mana": ["W"], "type_line": "Basic Land — Plains"}
-    island = {"name": "Island", "produced_mana": ["U"], "type_line": "Basic Land — Island"}
-    dual = {"name": "WU Dual", "produced_mana": ["W", "U"], "type_line": "Land"}
-    rec = recommend.recommend({"W": 4, "U": 4, "B": 0, "R": 0, "G": 0},
-                              [plains, island, dual])
-    # The dual covers both deficits at once, so it should be chosen (capped at 4).
-    assert rec["counts"].get("WU Dual", 0) == 4
-    # ...and with 4 duals giving 4 W + 4 U, no basics are needed.
-    assert rec["total"] == 4
-
-
-def test_recommender_prefers_focused_dual_over_rainbow():
-    # A 2-color deck should pick the W/U dual, not a 5-color land that wastes
-    # three off-colors, even though both "cover" W and U.
-    dual = {"name": "WU Dual", "produced_mana": ["W", "U"], "type_line": "Land"}
-    rainbow = {"name": "Rainbow", "produced_mana": ["W", "U", "B", "R", "G"], "type_line": "Land"}
-    rec = recommend.recommend({"W": 4, "U": 4, "B": 0, "R": 0, "G": 0}, [rainbow, dual])
-    assert rec["counts"].get("WU Dual", 0) == 4
-    assert "Rainbow" not in rec["counts"]
-
-
-def test_recommender_is_deterministic_regardless_of_order():
-    a = {"name": "Aaa Dual", "produced_mana": ["W", "U"], "type_line": "Land"}
-    z = {"name": "Zzz Dual", "produced_mana": ["W", "U"], "type_line": "Land"}
-    req = {"W": 4, "U": 4, "B": 0, "R": 0, "G": 0}
-    assert recommend.recommend(req, [a, z])["counts"] == recommend.recommend(req, [z, a])["counts"]
-
-
-def test_recommender_reports_shortfall_under_cap():
-    plains = {"name": "Plains", "produced_mana": ["W"], "type_line": "Basic Land — Plains"}
-    rec = recommend.recommend({"W": 10, "U": 0, "B": 0, "R": 0, "G": 0},
-                              [plains], max_lands=3)
-    assert rec["total"] == 3
-    assert rec["shortfall"].get("W") == 7
-
-
-def test_recommender_counts_only_positive():
-    # Regression: probing the per-card cap must not leave 0-count entries.
-    pool = [
-        {"name": "Plains", "produced_mana": ["W"], "type_line": "Basic Land — Plains"},
-        {"name": "Unused Dual", "produced_mana": ["B", "G"], "type_line": "Land"},
-    ]
-    rec = recommend.recommend({"W": 5, "U": 0, "B": 0, "R": 0, "G": 0}, pool)
-    assert all(v > 0 for v in rec["counts"].values())
-    assert "Unused Dual" not in rec["counts"]
-    assert sum(rec["counts"].values()) == rec["total"]
-
-
 def test_is_basic():
     assert lands.is_basic({"type_line": "Basic Land — Forest"})
     assert not lands.is_basic({"type_line": "Land"})
@@ -372,27 +103,12 @@ def test_is_land_accepts_typed_lands():
 
 
 # --------------------------------------------------------------------------
-# end-to-end regression against a committed fixture (offline, deterministic)
-# --------------------------------------------------------------------------
-def test_example_deck_requirements_regression():
-    with open(FIXTURE) as fh:
-        cards = json.load(fh)
-    reqs = requirements.requirements_for_cards(cards)
-    # Golden values for the bundled example deck.
-    assert reqs == {"W": 16, "U": 13, "B": 0, "R": 18, "G": 0}
-
-
-# --------------------------------------------------------------------------
 # build-data land color parsing: granted vs. own mana abilities
 # --------------------------------------------------------------------------
 def test_land_ignores_granted_mana_abilities():
     """A land doesn't make mana through abilities it GRANTS to other permanents.
     Forgotten Monument taps only for {C}; its 'any color' is granted (in quotes)
     to other Caves, so Scryfall's produced_mana over-reports all five colors."""
-    sys.path.insert(0, os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-    import build_data
-
     granted = {
         "name": "Forgotten Monument", "type_line": "Land — Cave",
         "produced_mana": ["B", "C", "G", "R", "U", "W"],
@@ -414,10 +130,6 @@ def test_land_basic_check_land_gates_color_on_a_basic():
     """Marvel 'check lands' tap for {C} freely but make their colors only with a
     basic in play, so their colored output is gated on controlling an actual
     basic land (not merely a basic land type, which typed nonbasic duals share)."""
-    sys.path.insert(0, os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-    import build_data
-
     bastion = {
         "name": "Gleaming Bastion", "type_line": "Land",
         "produced_mana": ["C", "U", "W"],
@@ -431,13 +143,39 @@ def test_land_basic_check_land_gates_color_on_a_basic():
     assert "typeGate" not in out              # gated on a basic, not a basic land type
 
 
+def test_unrecognized_activation_gate_is_conservative():
+    """An 'Activate only if ...' gate that names neither a basic land nor a basic
+    land type can't be evaluated, so its colors must NOT ship as unconditional
+    fixing (previously they fell through into plain `colors`). They land in the
+    flagged `unknownGated` field instead, and the land counts as colorless."""
+    weird = {
+        "name": "Gated Ruins", "type_line": "Land",
+        "produced_mana": ["B", "R"],
+        "oracle_text": ("{T}: Add {C}.\n{T}: Add {B} or {R}. Activate only if "
+                        "you control a Gate."),
+    }
+    out = build_data.slim_land(weird)
+    assert out["colors"] == []                     # not credited as reliable fixing
+    assert out.get("unknownGated") == ["B", "R"]   # flagged, not silently dropped
+    assert "gatedColors" not in out and "typeGate" not in out
+
+    # A recognized basic-TYPE gate (the Verge cycle) keeps its normal handling.
+    verge = {
+        "name": "Gloomlake Verge", "type_line": "Land",
+        "produced_mana": ["B", "U"],
+        "oracle_text": ("{T}: Add {U}.\n{T}: Add {B}. Activate only if you "
+                        "control an Island or a Swamp."),
+    }
+    v = build_data.slim_land(verge)
+    assert v["colors"] == ["B", "U"] and v["gatedColors"] == ["B"]
+    assert v["typeGate"] == ["Island", "Swamp"]
+    assert "unknownGated" not in v
+
+
 def test_life_condition_land_reads_as_tapped():
     """A land that enters tapped 'unless a player has 13 or less life' (the
     Duskmourn cycle) is effectively tapped while you're curving out — nobody is at
     low life yet — so it should not be treated as an untapped source."""
-    sys.path.insert(0, os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-    import build_data
     assert build_data._enters_tapped(
         "this land enters tapped unless a player has 13 or less life.\n{t}: add {w} or {u}.") is True
     # ...but a turn-based "unless" (Starting Town) really is untapped early.
@@ -449,9 +187,6 @@ def test_slow_land_is_flagged_untapped_but_slow():
     """Slow lands ('enters tapped unless you control two or more other lands') are
     kept untapped (they're untapped from turn 3, when their decks cast), but flagged
     `slow` so the simulator can treat them as tapped on turns 1-2."""
-    sys.path.insert(0, os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-    import build_data
     out = build_data.slim_land({
         "name": "Sundown Pass", "type_line": "Land", "produced_mana": ["R", "W"],
         "oracle_text": ("This land enters tapped unless you control two or more other "
@@ -465,9 +200,6 @@ def test_roads_land_defaults_tapped_with_untap_condition():
     """The 'Roads' cycle ('enters tapped unless you control a Mount or Vehicle') banks
     on a board state most decks never reach, so it defaults to tapped with an
     `untapWhen` flag the app uses to untap it only for Mount/Vehicle decks."""
-    sys.path.insert(0, os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-    import build_data
     road = build_data.slim_land({
         "name": "Rocky Roads", "type_line": "Land", "produced_mana": ["R"],
         "oracle_text": "This land enters tapped unless you control a Mount or Vehicle.\n{T}: Add {R}.",
@@ -482,9 +214,6 @@ def test_basic_unless_land_defaults_tapped():
     in games where a basic is actually in play. Both the 'a basic land' and the
     specific basic-type ('Island or a Plains') wordings are covered. The colors stay
     reliable — only the tapped status is conditional."""
-    sys.path.insert(0, os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-    import build_data
     any_basic = build_data.slim_land({
         "name": "Agna Qel'a", "type_line": "Land", "produced_mana": ["U"],
         "oracle_text": "This land enters tapped unless you control a basic land.\n{T}: Add {U}.",
@@ -511,9 +240,6 @@ def test_smooths_ignores_board_triggered_card_selection():
     it — a cantrip, an ETB, or an always-on/activated ability — not from a board state
     you have to earn. A draw gated behind attacking, tapping, or dealing combat damage
     is not reliable early smoothing (Gran-Gran loots only when it becomes tapped)."""
-    sys.path.insert(0, os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-    import build_data
     s = build_data._smooths
 
     # The reported case: tap-triggered loot on a 1-drop creature -> NOT smooth.
@@ -543,13 +269,25 @@ def test_smooths_ignores_board_triggered_card_selection():
               "oracle_text": "{T}: Add {G}."}) is True
 
 
+def test_smooths_excludes_lands():
+    """A LAND is never a smoother — it can't trim the land count it is part of.
+    Fetch-lands (Evolving Wilds) match the 'search your library for a land'
+    wording but are modeled on the land side (`slim_land`'s fetch flag), so the
+    search branch must exclude lands the way the produced_mana branch does."""
+    wilds = {"cmc": 0, "type_line": "Land", "name": "Evolving Wilds",
+             "oracle_text": ("{T}, Sacrifice this land: Search your library for a "
+                             "basic land card, put it onto the battlefield tapped, "
+                             "then shuffle.")}
+    assert build_data._smooths(wilds) is False
+    assert build_data.slim_card(wilds)["smooth"] is False
+    # The nonland equivalent wording still smooths.
+    assert build_data._smooths({"cmc": 2, "type_line": "Sorcery", "oracle_text":
+                                "Search your library for a basic land card…"}) is True
+
+
 def test_fetch_flag_distinguishes_land_search_from_cantrips():
     """`fetch` marks a low-cost nonland that searches for a *land* (the sim resolves
     it to a chosen color), distinct from generic card draw (still `smooth`)."""
-    sys.path.insert(0, os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-    import build_data
-
     cultivate = {"cmc": 3, "type_line": "Sorcery", "name": "Cultivate", "oracle_text":
                  "Search your library for up to two basic land cards…"}
     assert build_data._fetches_land(cultivate) is True
@@ -565,3 +303,59 @@ def test_fetch_flag_distinguishes_land_search_from_cantrips():
     # Fetch *lands* (Evolving Wilds) are handled on the land side, not here.
     assert build_data._fetches_land({"cmc": 0, "type_line": "Land", "name": "Evolving Wilds",
                                      "oracle_text": "Search your library for a basic land card…"}) is False
+
+
+# --------------------------------------------------------------------------
+# build-data output validation (the floors that gate the weekly commit)
+# --------------------------------------------------------------------------
+def _plausible_snapshot(n_lands=250, n_cards=3500):
+    lands_out = [build_data.slim_land(_land("Land {}".format(i), ["W"],
+                                            oracle_text="{T}: Add {W}."))
+                 for i in range(n_lands)]
+    cards_out = {}
+    for i in range(n_cards):
+        name = "Card {}".format(i)
+        cards_out[name.lower()] = build_data.slim_card(
+            {"name": name, "mana_cost": "{1}{W}", "type_line": "Creature",
+             "oracle_text": ""})
+    return lands_out, cards_out
+
+
+def test_validate_data_accepts_plausible_snapshot():
+    lands_out, cards_out = _plausible_snapshot()
+    build_data.validate_data(lands_out, cards_out)  # must not raise
+
+
+def test_validate_data_trips_on_too_few_lands():
+    lands_out, cards_out = _plausible_snapshot(n_lands=50)
+    with pytest.raises(SystemExit, match="lands"):
+        build_data.validate_data(lands_out, cards_out)
+
+
+def test_validate_data_trips_on_too_few_cards():
+    lands_out, cards_out = _plausible_snapshot(n_cards=100)
+    with pytest.raises(SystemExit, match="cards"):
+        build_data.validate_data(lands_out, cards_out)
+
+
+def test_validate_data_trips_on_colorless_land_pool():
+    # A pool where (nearly) every land parsed to no colors and no fetch flag
+    # means the color analysis broke — the 90% floor must trip.
+    lands_out, cards_out = _plausible_snapshot()
+    for land in lands_out:
+        land["colors"] = []
+        land.pop("fetch", None)
+    with pytest.raises(SystemExit, match="colors"):
+        build_data.validate_data(lands_out, cards_out)
+
+
+def test_validate_data_trips_on_missing_keys():
+    lands_out, cards_out = _plausible_snapshot()
+    del lands_out[0]["tapped"]
+    with pytest.raises(SystemExit, match="missing keys"):
+        build_data.validate_data(lands_out, cards_out)
+
+    lands_out, cards_out = _plausible_snapshot()
+    del next(iter(cards_out.values()))["smooth"]
+    with pytest.raises(SystemExit, match="missing keys"):
+        build_data.validate_data(lands_out, cards_out)

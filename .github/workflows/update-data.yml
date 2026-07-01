@@ -21,11 +21,26 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install requests
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # build_data validates the snapshot (count floors, key checks) and exits
+      # non-zero without writing anything if the data looks wrong.
       - name: Build data from Scryfall
         run: python scripts/build_data.py
+
+      # Freshly built data must not ship if the test suites fail.
+      - name: Run Python tests
+        run: python -m pytest tests/ -q
+
+      - name: Run JS tests
+        run: |
+          for f in docs/js/tests/*.test.js; do node "$f"; done
 
       - name: Commit and push refreshed data
         run: |

@@ -1,6 +1,6 @@
-"""Pure-logic core for the MTG manabase helper.
+"""Support package for the data pipeline (scripts/build_data.py).
 
-This package holds all the deck/card/land logic that the GUI and CLI share.
-It must stay free of any Tkinter or PIL imports so it can be imported and
-unit-tested without a display.
+Holds the Scryfall fetch/cache layer, land identification/dedup helpers, and
+path configuration. The manabase math itself lives in the JavaScript app under
+docs/js/ — this package no longer mirrors it.
 """
