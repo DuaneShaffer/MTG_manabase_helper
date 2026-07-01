@@ -5,6 +5,8 @@
   "id": "/MTG_manabase_helper/app.html",
   "start_url": "./app.html",
   "scope": "./",
+  "lang": "en",
+  "categories": ["games", "utilities"],
   "display": "standalone",
   "background_color": "#14110e",
   "theme_color": "#14110e",

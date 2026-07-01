@@ -231,6 +231,12 @@
     } else {
       document.querySelectorAll(".reveal").forEach((el) => el.classList.add("in"));
     }
+
+    // Offline support: register the service worker (sw.js precaches the shell).
+    // Fire-and-forget — must never delay or break the page.
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    }
   </script>
 </body>
 </html>

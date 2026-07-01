@@ -2074,3 +2074,9 @@ function wireEvents() {
 }
 
 boot();
+
+// Offline support: register the service worker (sw.js precaches the shell).
+// Fire-and-forget — must never delay or break boot.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
