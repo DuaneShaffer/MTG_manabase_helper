@@ -20,9 +20,8 @@
   <meta name="twitter:title" content="Manabase — will your deck cast its spells?">
   <meta name="twitter:description" content="Paste a Standard decklist and see, card by card, how reliably your lands deliver the right colors on curve.">
   <meta name="twitter:image" content="https://duaneshaffer.github.io/MTG_manabase_helper/og-image.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/cinzel-latin.woff2" as="font" type="font/woff2" crossorigin>
   <!-- Same theme as the app: set it before paint (shared 'mtg_theme' key, else system preference).
        Also marks <html> as JS-capable so the scroll-reveal styles only hide content
        when the script that reveals it will actually run. -->
@@ -36,6 +35,7 @@
       } catch (e) { document.documentElement.dataset.theme = "dark"; }
     })();
   </script>
+  <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="landing.css">
 </head>
 <body>

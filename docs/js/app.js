@@ -1,8 +1,8 @@
 import { COLORS, COLOR_NAMES } from "./colors.js";
 import { costConstraints, manaValue, parseCost } from "./mana.js";
-import { requirementsForCards } from "./requirements.js";
+import { requirementsForCards, nonlandSourceCredit } from "./requirements.js";
 import { castableProbability, multivariateCastable, buildCastable, assumedDeckSize, grade, drawOddsByTurn } from "./hypergeometric.js";
-import { recommend as recommendManabase, recommendLandCount } from "./recommend.js";
+import { recommend as recommendManabase, recommendLandCount, creditAdjustedRequirements } from "./recommend.js";
 import { optimizeManabase, battleTested, OBJECTIVES, setLandPopularity } from "./optimize.js";
 import { manabaseAdvice } from "./advice.js";
 import { simulateDeck } from "./montecarlo.js";
@@ -20,6 +20,7 @@ const state = {
   lands: [],
   counts: {},
   requirements: { W: 0, U: 0, B: 0, R: 0, G: 0 },
+  credit: null,        // nonland mana credit (dorks/rocks): { byColor, producers } — derived, never persisted
   spells: [],          // colored deck spells for grading
   deckCards: [],       // nonland deck cards {name, mv, qty} for the curve
   deckSize: 60,        // the size every model runs at (assumed final size for spell-only lists)
@@ -74,6 +75,46 @@ function fetchCount() {
   for (const c of state.smoothCards) if (c.fetch) n += (state.smoothOverrides[c.name] ?? c.qty);
   for (const c of state.digCards) if (c.fetch) n += (state.digOverrides[c.name] ?? c.qty);
   return n;
+}
+
+// Fractional credit values are multiples of 0.25 — print them tersely ("1.5", "0.75", "2").
+function fmtCredit(v) {
+  return v.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+// Tooltip for one color's nonland-source credit: which dorks/rocks contribute,
+// at what weight, and the Karsten rationale. Plain text (title attribute).
+function creditTip(color) {
+  const ps = (state.credit?.producers || []).filter((p) => p.colors.includes(color));
+  const lines = ps.map((p) =>
+    `${p.name} ×${p.qty} — mana ${p.kind}, ≈${p.kind === "dork" ? "½" : "¾"} source each (+${fmtCredit(p.weight * p.qty)})`);
+  return `Nonland ${COLOR_NAMES[color]} sources (not counted in your land total):\n` +
+    lines.join("\n") +
+    `\n\nKarsten's counting: a mana dork ≈ half a source, a mana rock ≈ ¾ — slower and more fragile ` +
+    `than a land, and only helping spells that come down after the producer. Shown separately so ` +
+    `lands and credit never blur together.`;
+}
+
+// The per-color minimums handed to the ILP: land requirements minus the
+// fractional dork/rock credit (ceil'd, floored at 0). The displayed
+// requirements stay the full land numbers — credit is always shown apart.
+function ilpRequirements() {
+  const by = state.credit?.byColor;
+  if (!by || !COLORS.some((c) => by[c] > 0)) return state.requirements;
+  return creditAdjustedRequirements(state.requirements, by);
+}
+
+// Spell//land MDFC copies in the deck, as the sim's opts.backLands tokens.
+// These cards stay spells everywhere else — the sim alone models playing the
+// back face as a land when the hand is short.
+function backLandOpts() {
+  const out = [];
+  for (const c of state.resolvedCards || []) {
+    if (!c.backLand || isLandType(c.type)) continue;
+    const qty = state.qtyByName[c.name] || 0;
+    if (qty > 0) out.push({ colors: c.backLand.colors || [], tapped: !!c.backLand.tapped, count: qty });
+  }
+  return out;
 }
 
 const $ = (s) => document.querySelector(s);
@@ -167,7 +208,7 @@ function buildDashboard() {
       <div class="bar-wrap">
         <div class="bar"><div class="bar-fill"></div><div class="bar-req"></div></div>
       </div>
-      <div class="count"><span class="cur">0</span><span class="req"></span></div>`;
+      <div class="count"><span class="cur">0</span><span class="cr"></span><span class="req"></span></div>`;
     wrap.appendChild(row);
   }
 }
@@ -183,6 +224,17 @@ function refreshDashboard() {
     row.querySelector(".bar-req").style.left = req > 0 ? (req / scale) * 100 + "%" : "-10px";
     row.querySelector(".cur").textContent = cur;
     row.querySelector(".req").textContent = req > 0 ? " / " + req : "";
+    // Nonland mana credit (dorks/rocks) — annotated NEXT TO the land count, never
+    // folded into it: lands and credit stay separately legible.
+    const cred = state.credit ? state.credit.byColor[c] || 0 : 0;
+    const crEl = row.querySelector(".cr");
+    if (cred > 0 && req > 0) {
+      crEl.textContent = `+${fmtCredit(cred)}◦`;
+      crEl.title = creditTip(c);
+    } else {
+      crEl.textContent = "";
+      crEl.removeAttribute("title");
+    }
     row.classList.toggle("met", req > 0 && cur >= req);
     row.classList.toggle("short", req > 0 && cur < req);
   }
@@ -195,6 +247,8 @@ function tileFor(land) {
   const dots = el("div", "colors-dot");
   for (const c of land.colors) { const i = el("i"); i.dataset.c = c; dots.appendChild(i); }
   const ph = el("div", "ph"); ph.textContent = land.name;
+  // pickOne honesty note: the letter grade treats this as a full dual; the sim is exact.
+  if (land.pickOne) tile.title = `${land.name} — pick-one land: graded as a dual; the simulation models the pick-one lock-in.`;
   const img = el("img");
   img.alt = land.name; img.loading = "lazy"; img.decoding = "async";
   img.addEventListener("load", () => img.classList.add("loaded"));
@@ -375,13 +429,21 @@ function refreshBuildList() {
     const empty = el("div", "build-empty");
     empty.textContent = "No lands yet. Add them from the grid, or press Build manabase.";
     list.appendChild(empty);
-    $("#buildDilution").textContent = "";
+    const dil0 = $("#buildDilution");
+    dil0.textContent = "";
+    dil0.classList.remove("warn");
+    $("#dilutionInfo").hidden = true;
     return;
   }
   for (const { land, n } of rows) {
     const row = el("div", "build-row");
     const c = el("span", "b-c"); c.textContent = n;
-    const name = el("span", "b-n"); name.textContent = land.name; name.title = land.name;
+    const name = el("span", "b-n"); name.textContent = land.name;
+    // pickOne honesty: the letter grade treats a pick-one land as a full dual
+    // (an approximation); only the simulation models the lock-in exactly.
+    name.title = land.pickOne
+      ? `${land.name} — pick-one land: graded as a dual; the simulation models the pick-one lock-in.`
+      : land.name;
     const dots = el("span", "b-d");
     for (const col of land.colors) { const i = el("i"); i.dataset.c = col; dots.appendChild(i); }
     const step = el("div", "b-step");
@@ -395,10 +457,23 @@ function refreshBuildList() {
     row.append(c, name, dots, step);
     list.appendChild(row);
   }
-  // Dilution: flag lands that make no colored mana (utility/colorless) so a base
-  // padded with them is visible at a glance.
+  // Dilution: lands that make no colored mana (utility/colorless) thin out the
+  // colored sources your spells count on — surface the split at a glance, and
+  // warn when the padding is heavy while a color is still short (counting
+  // dork/rock credit, so a deliberately credit-covered color doesn't cry wolf).
   const colored = rows.filter((r) => r.land.colors.length).reduce((s, r) => s + r.n, 0);
-  $("#buildDilution").textContent = colored < total ? `${colored} colored · ${total} lands` : `${total} lands`;
+  const colorless = total - colored;
+  const dil = $("#buildDilution");
+  dil.textContent = `${colored} colored source${colored === 1 ? "" : "s"} across ${total} land${total === 1 ? "" : "s"}` +
+    (colorless > 0 ? `, ${colorless} colorless/utility` : "");
+  let diluted = false;
+  if (colorless > 0.15 * total) {
+    const t = tally();
+    const by = state.credit?.byColor || {};
+    diluted = COLORS.some((c) => state.requirements[c] > 0 && t[c] + (by[c] || 0) < state.requirements[c]);
+  }
+  dil.classList.toggle("warn", diluted);
+  $("#dilutionInfo").hidden = false;
 }
 
 /* ---------- conditional fixing (Avengers Tower etc.) ---------- */
@@ -709,6 +784,12 @@ function rebuildFromCosts() {
 
   state.requirements = requirementsForCards(
     cards.map((c) => ({ cost: effectiveCost(c) })), state.deckSize, state.threshold);
+
+  // Fractional nonland-source credit (mana dorks ≈½, rocks ≈¾ per copy). Lives
+  // on the "have" side only: displayed as a separate annotation and used to
+  // relax the recommender's per-color land minimums — never folded into the
+  // land requirements above.
+  state.credit = nonlandSourceCredit(cards.filter((c) => !isLandType(c.type)), qtyByName);
 
   // Conditional fixing: turn on lands whose spell-type condition the deck meets.
   applyConditions(cards, qtyByName);
@@ -1153,6 +1234,7 @@ function simKey(drawCount, fetches) {
     .map((l) => l.name + ":" + l.colors.join("") + (l.tapped ? "T" : ""));
   return JSON.stringify({ counts, landSig, drawCount, fetches, deck: state.deckSize,
     req: state.requirements,
+    back: backLandOpts(),   // spell//land MDFC copies feed the sim as playable back-face lands
     spells: state.spells.map((s) => [s.name, s.mv, s.pips, s.hybrids]) });
 }
 
@@ -1167,7 +1249,7 @@ function doSimulate() {
   // figures stay stable between edits and the preview moves only the cards a cut affects.
   const key = simKey(drawCount, fetches);
   if (simCache.key !== key) {
-    const opts = { trials: 5000, drawCount, fetchCount: fetches, seed: BATTLE_SEED };
+    const opts = { trials: 5000, drawCount, fetchCount: fetches, seed: BATTLE_SEED, backLands: backLandOpts() };
     simCache.key = key;
     simCache.play = simulateDeck(state.spells, lands, state.deckSize, { ...opts, onPlay: true });
     simCache.drawFull = simulateDeck(state.spells, lands, state.deckSize, { ...opts, onPlay: false });
@@ -1180,7 +1262,7 @@ function doSimulate() {
   // so swapping into the preview costs one sim and reverting costs none.
   if (previewing && !simCache.drawCut) {
     simCache.drawCut = simulateDeck(state.spells, slack.cutLands, state.deckSize,
-      { trials: 5000, drawCount, fetchCount: fetches, seed: BATTLE_SEED, onPlay: false });
+      { trials: 5000, drawCount, fetchCount: fetches, seed: BATTLE_SEED, onPlay: false, backLands: backLandOpts() });
   }
   const resPlay = simCache.play;
   const resDraw = previewing ? simCache.drawCut : simCache.drawFull;
@@ -1230,7 +1312,7 @@ function currentSimLands() {
   const lands = [];
   for (const { land } of state.tiles.values()) {
     const c = state.counts[land.name] || 0;
-    if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, basic: !!land.basic, needsBasic: !!land.needsBasic, slow: !!land.slow, untapBasic: !!land.untapBasic, count: c });
+    if (c) lands.push({ colors: land.colors, tapped: !!land.tapped, basic: !!land.basic, needsBasic: !!land.needsBasic, slow: !!land.slow, untapBasic: !!land.untapBasic, pickOne: !!land.pickOne, faces: land.faces, count: c });
   }
   return lands;
 }
@@ -1260,7 +1342,7 @@ function computeDrawSlack() {
   const drawCount = smoothCount() + digCount();
   const fetches = fetchCount();
   const overall = (lands, onPlay) =>
-    simulateDeck(state.spells, lands, state.deckSize, { trials: 4000, seed: BATTLE_SEED, drawCount, fetchCount: fetches, onPlay }).overall;
+    simulateDeck(state.spells, lands, state.deckSize, { trials: 4000, seed: BATTLE_SEED, drawCount, fetchCount: fetches, onPlay, backLands: backLandOpts() }).overall;
   const playBar = overall(base, true);          // on the play, full build — the bar to clear
   let work = base.map((l) => ({ ...l }));
   let cut = 0, color = null, drawAfter = overall(base, false);   // on the draw, before any cut
@@ -1354,10 +1436,12 @@ const _sig = (rec) => rec.total + "|" + rec.taplands;
 // land-count / tapland tradeoff). Shared by the Recommend drawer and the
 // "Suggested" land filter, so both tell the same story.
 async function computeRecOptions() {
+  // The ILP's per-color minimums are credit-adjusted: a color the deck already
+  // part-supplies from dorks/rocks demands fewer LANDS of that color.
   const results = await Promise.all(
     REC_OBJECTIVES.map((objective) =>
       optimizeManabase({
-        requirements: state.requirements, lands: state.lands,
+        requirements: ilpRequirements(), lands: state.lands,
         landTarget: state.landTarget, objective, demandWeights: state.demand,
       }).then((rec) => ({ objective, rec }), () => null)),
   );
@@ -1394,9 +1478,9 @@ async function computeBattleTested() {
   // each trial (robust to builds mulliganing at different rates), so the comparison
   // is low-variance and the pick is deterministic.
   const simulate = (buildLands, deckSize, trials) =>
-    simulateDeck(state.spells, buildLands, deckSize, { trials, drawCount, fetchCount: fetches, seed: BATTLE_SEED });
+    simulateDeck(state.spells, buildLands, deckSize, { trials, drawCount, fetchCount: fetches, seed: BATTLE_SEED, backLands: backLandOpts() });
   const pick = await battleTested({
-    requirements: state.requirements, lands: state.lands, landTarget: state.landTarget,
+    requirements: ilpRequirements(), lands: state.lands, landTarget: state.landTarget,
     demandWeights: state.demand, spells: state.spells, deckSize: state.deckSize, simulate,
   });
   return pick ? { label: "Battle-tested", rec: pick.rec, sim: pick.sim } : null;
@@ -1466,7 +1550,8 @@ async function computeAllRecs() {
 
     // No feasible optimal base at this target — fall back to the greedy heuristic,
     // which always returns something (possibly short), and explain.
-    const greedy = recommendManabase(state.requirements, state.lands, { landTarget: state.landTarget });
+    const greedy = recommendManabase(state.requirements, state.lands,
+      { landTarget: state.landTarget, credit: state.credit?.byColor });
     state.recOptions = [{ label: "Best effort", rec: greedy }];
     renderRecOptions(state.recOptions);
     selectRecOption(0);
@@ -1476,7 +1561,8 @@ async function computeAllRecs() {
   } catch (e) {
     if (run !== _recRun) return;
     // Solver unavailable: fall back to the greedy recommender.
-    const greedy = recommendManabase(state.requirements, state.lands, { landTarget: state.landTarget });
+    const greedy = recommendManabase(state.requirements, state.lands,
+      { landTarget: state.landTarget, credit: state.credit?.byColor });
     state.recOptions = [{ label: "Balanced", rec: greedy }];
     renderRecOptions(state.recOptions);
     selectRecOption(0);
@@ -1653,11 +1739,12 @@ function buildAnalysisJSON() {
   const sources = { W: t.W, U: t.U, B: t.B, R: t.R, G: t.G };
   const drawCount = smoothCount() + digCount();
   const fetches = fetchCount();
+  const backLands = backLandOpts();
   const sp = state.spells.length
-    ? simulateDeck(state.spells, currentSimLands(), state.deckSize, { trials: 5000, drawCount, fetchCount: fetches, onPlay: true, seed: BATTLE_SEED })
+    ? simulateDeck(state.spells, currentSimLands(), state.deckSize, { trials: 5000, drawCount, fetchCount: fetches, onPlay: true, seed: BATTLE_SEED, backLands })
     : null;
   const sd = state.spells.length
-    ? simulateDeck(state.spells, currentSimLands(), state.deckSize, { trials: 5000, drawCount, fetchCount: fetches, onPlay: false, seed: BATTLE_SEED })
+    ? simulateDeck(state.spells, currentSimLands(), state.deckSize, { trials: 5000, drawCount, fetchCount: fetches, onPlay: false, seed: BATTLE_SEED, backLands })
     : null;
   const landGroups = gradeLandGroups();
   const cards = state.spells.map((spell) => {
@@ -1940,6 +2027,13 @@ function wireEvents() {
     analyzeDeck();
   });
   $("#clearBtn").addEventListener("click", clearDeck);
+  // Mobile-friendly file picker: same code path as dropping a file on the textarea.
+  $("#fileBtn").addEventListener("click", () => $("#deckFile").click());
+  $("#deckFile").addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) readDeckFile(file);
+    e.target.value = "";   // so re-picking the same file fires change again
+  });
   $("#recommendBtn").addEventListener("click", recommend);
   $("#recOptions").addEventListener("click", (e) => {
     const btn = e.target.closest(".rec-option");
@@ -1983,6 +2077,11 @@ function wireEvents() {
   });
   $("#gradeInfo").addEventListener("click", (e) => {
     const note = $("#gradeNote");
+    note.hidden = !note.hidden;
+    e.currentTarget.setAttribute("aria-expanded", String(!note.hidden));
+  });
+  $("#dilutionInfo").addEventListener("click", (e) => {
+    const note = $("#dilutionNote");
     note.hidden = !note.hidden;
     e.currentTarget.setAttribute("aria-expanded", String(!note.hidden));
   });

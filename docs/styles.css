@@ -2,33 +2,23 @@
    Manabase — Standard source calculator
    Palette: a deckbuilder's table at night. The five MTG mana
    colors are the accent system; gold (legendary border) unifies.
+   Shared tokens (color ramp, WUBRG, grades, fonts) live in
+   tokens.css (loaded first); only app-specific ones live here.
    ============================================================ */
 :root {
-  --table:      #14110e;   /* deep warm near-black */
-  --table-2:    #1b1712;   /* page gradient foot */
-  --surface:    #221d17;   /* raised panel */
-  --surface-2:  #2b251d;   /* inputs, tiles */
-  --line:       #3a3127;   /* hairline */
-  --parchment:  #ece2cc;   /* headings */
-  --ink:        #b6ab93;   /* body text */
-  --ink-dim:    #9d9079;   /* captions — lightened to clear AA on panel surfaces */
-  --gold:       #c9a227;   /* primary accent — reserved for primary actions + the target number */
-  --gold-soft:  #d8b94a;
-  --gold-bright:#e8c95a;
   --guide:      #5bbcd6;   /* informational/guidance accent (fixer glow, draw-tag) — distinct from gold "action" */
   --warn:       #e0a33a;   /* shortfall / warnings — amber, off the WUBRG palette so it never reads as Red */
 
-  --W: #efe9c9;  --W-ink: #2a2417;
-  --U: #2f7bd0;  --U-ink: #eaf3ff;
-  --B: #8b7d93;  --B-ink: #150f1a;   /* desaturated so it reads on dark */
-  --R: #d2402f;  --R-ink: #fff0ec;
-  --G: #34a865;  --G-ink: #04150b;
+  /* ink-on-pip colors for the WUBRG chips */
+  --W-ink: #2a2417;
+  --U-ink: #eaf3ff;
+  --B-ink: #150f1a;   /* B is desaturated in tokens.css so it reads on dark */
+  --R-ink: #fff0ec;
+  --G-ink: #04150b;
 
   --radius: 14px;
   --radius-sm: 9px;
   --shadow: 0 10px 30px -12px rgba(0,0,0,.7);
-  --font-display: "Cinzel", Georgia, serif;
-  --font-ui: "Inter", system-ui, -apple-system, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -180,13 +170,9 @@ section.deck-input, section.dashboard {
 .confidence select:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 1px; border-color: var(--gold); }
 
 /* ---------- reliability tint scale ---------- */
-/* A calm green→amber→clay ramp. No alarm-red: a low % on a greedy top-end card
-   is information, not a failing grade. Bands are an internal color key (data-g);
-   the user only ever sees the %. */
-:root {
-  --grade-A: #3fae6b; --grade-B: #7bbf94; --grade-C: #c9a227;
-  --grade-D: #cf9244; --grade-F: #bf7a5a;
-}
+/* A calm green→amber→clay ramp (--grade-A…F, defined in tokens.css). No alarm-red:
+   a low % on a greedy top-end card is information, not a failing grade. Bands are
+   an internal color key (data-g); the user only ever sees the %. */
 
 /* ---------- deck castability strip ---------- */
 .deck-strip { background: var(--surface); border: 1px solid var(--line);
@@ -752,21 +738,10 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
    dark background. (Toggle in the topbar; persisted + system-aware.)
    ============================================================ */
 :root[data-theme="light"] {
-  --table:      #efe6d3;   /* warm parchment page */
-  --table-2:    #e4d6ba;   /* gradient foot */
-  --surface:    #fbf6ec;   /* raised panel — near-white warm */
-  --surface-2:  #f1e8d5;   /* inputs, tiles */
-  --line:       #d8c9aa;   /* hairline */
-  --parchment:  #2a2317;   /* headings — now a dark warm ink */
-  --ink:        #4a4030;   /* body text */
-  --ink-dim:    #6e6450;   /* captions — clears AA on the light surfaces */
-  --gold:       #b8911c;
-  --gold-soft:  #876908;   /* accent numbers on light — deep enough to read */
-  --gold-bright:#caa42a;
+  /* the shared palette flip lives in tokens.css; app-specific tokens here */
   --guide:      #1d7c98;   /* informational accent — deepened for light */
   --warn:       #a4610d;
   --shadow:     0 10px 28px -14px rgba(70,52,20,.35);
-  --W: #e4d59a;            /* deeper cream so the White pip + bar read on parchment */
 }
 /* the topbar veil flips from a dark wash to a light one */
 :root[data-theme="light"] .topbar { background: linear-gradient(180deg, rgba(255,251,240,.7), transparent); }
@@ -785,3 +760,66 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 :root[data-theme="light"] .cost-tag,
 :root[data-theme="light"] .sim-pill svg.axis-ico.timing { color: #f2ead7; }
 :root[data-theme="light"] .sim-pill .sp-sep { color: #c2b69b; }
+
+/* ============================================================
+   Print — a plain, black-on-white readout of the analysis:
+   your build + grade, the graded curve, and the mana sources.
+   Input chrome, the land browser, and all interactive bits go;
+   light-for-print tokens apply whatever theme is active.
+   ============================================================ */
+@media print {
+  /* paper tokens, regardless of the on-screen theme (":root[data-theme]"
+     outranks the themed blocks above by equal specificity + later order) */
+  :root, :root[data-theme] {
+    --table: #fff; --table-2: #fff;
+    --surface: #fff; --surface-2: #fff;
+    --line: #999;
+    --parchment: #000; --ink: #1a1a1a; --ink-dim: #444;
+    --gold: #7a5f08; --gold-soft: #7a5f08; --gold-bright: #7a5f08;
+    --guide: #1d7c98; --warn: #a4610d;
+    --shadow: none;
+  }
+  * { box-shadow: none !important; text-shadow: none !important; backdrop-filter: none !important; }
+  body { background: #fff !important; color: var(--ink); }
+
+  /* chrome that makes no sense on paper */
+  .topbar, .deck-input, .draw-tool,          /* input + side tools */
+  .grid-head, .grid, .empty,                 /* the land browser */
+  .deck-cmd, .strip-legend, .grade-legend,   /* buttons + on-screen legends */
+  .mobile-grade, .drawer, .card-preview, .smooth-pop, .cost-pop,
+  button, select, input, textarea { display: none !important; }
+
+  /* one flowing column: the dashboard (your build + grade) above the deck strip */
+  .layout { display: block; padding: 0; }
+  .panel { position: static; display: block; }
+  .grid-wrap { min-height: 0; }
+  .dashboard, .deck-strip, .mana-bar { border-color: var(--line); }
+  .hud-grade { position: static; }
+
+  /* card tiles: skip the art (dark pill backgrounds don't print) and let the
+     placeholder name + the grade figures carry the information */
+  .spell img { display: none !important; }
+  .spell .sph { color: var(--ink); font-weight: 600; }
+  .spell { aspect-ratio: auto; min-height: 88px; }
+  .spell .qty, .spell .badge, .sim-pill,
+  .dig-tag, .cost-tag { background: none !important; border-color: transparent !important; }
+  /* !important: outranks both the [data-g] grade tints and the light-theme
+     on-art overrides (#f2ead7 would vanish on paper) */
+  .spell .qty, .spell .badge .bp, .sim-pill .sp-p,
+  .dig-tag, .cost-tag { color: var(--ink) !important; }
+  .sim-pill .sp-sep, svg.axis-ico.timing { color: var(--ink-dim) !important; }
+
+  /* keep rows and sections whole across page breaks */
+  .spell, .build-row, .rec-target-row, .total-row, .hud-grade,
+  .overall, .grade-note, .colors > * { break-inside: avoid; page-break-inside: avoid; }
+  .dashboard, .deck-strip, .mana-bar { break-inside: auto; }
+}
+
+/* --- nonland mana credit annotation + dilution readout (appended) --------- */
+/* The "+n.n◦" next to a color's land count: dork/rock credit shown apart from
+   lands, never folded in. Hover for the contributing producers. */
+.count .cr { color: var(--ink-dim); font-size: 11px; font-weight: 500; margin-left: 3px; cursor: help; }
+.color-row.short .count .cr { text-decoration: none; }
+.build-dilution-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.build-dilution-wrap .info-dot { flex: none; width: 16px; height: 16px; font-size: 11px; }
+.build-dilution.warn { color: var(--warn); }

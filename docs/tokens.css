@@ -1,0 +1,72 @@
+/* ============================================================
+   Manabase — shared design tokens + self-hosted fonts.
+   Loaded FIRST by both pages (index.html + app.html); styles.css
+   and landing.css keep only their page-specific tokens (and may
+   override these by later cascade order — e.g. each page keeps
+   its own --shadow).
+   ============================================================ */
+
+/* ---------- self-hosted fonts (latin subset, variable wght) ----------
+   Downloaded from Google Fonts (Cinzel v26, Inter v20) — the same
+   variable woff2 Google serves per family, so one file covers every
+   weight the site uses (Cinzel 500–700, Inter 400–700). The latin
+   unicode-range matches Google's, so anything outside it (e.g. →)
+   falls back to the system stacks exactly as before. */
+@font-face {
+  font-family: "Cinzel";
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url("fonts/cinzel-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ---------- dark theme (default) — "the table at night" ---------- */
+:root {
+  --table:      #14110e;   /* deep warm near-black */
+  --table-2:    #1b1712;   /* page gradient foot */
+  --surface:    #221d17;   /* raised panel */
+  --surface-2:  #2b251d;   /* inputs, tiles */
+  --line:       #3a3127;   /* hairline */
+  --parchment:  #ece2cc;   /* headings */
+  --ink:        #b6ab93;   /* body text */
+  --ink-dim:    #9d9079;   /* captions — lightened to clear AA on panel surfaces */
+  --gold:       #c9a227;   /* primary accent — reserved for primary actions + the target number */
+  --gold-soft:  #d8b94a;
+  --gold-bright:#e8c95a;
+
+  /* the five MTG mana colors */
+  --W: #efe9c9;  --U: #2f7bd0;  --B: #8b7d93;  --R: #d2402f;  --G: #34a865;
+
+  /* reliability ramp — calm green→amber→clay (no alarm-red) */
+  --grade-A: #3fae6b; --grade-B: #7bbf94; --grade-C: #c9a227;
+  --grade-D: #cf9244; --grade-F: #bf7a5a;
+
+  --font-display: "Cinzel", Georgia, serif;
+  --font-ui: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ---------- light theme — "the table by day" ---------- */
+:root[data-theme="light"] {
+  --table:      #efe6d3;   /* warm parchment page */
+  --table-2:    #e4d6ba;   /* gradient foot */
+  --surface:    #fbf6ec;   /* raised panel — near-white warm */
+  --surface-2:  #f1e8d5;   /* inputs, tiles */
+  --line:       #d8c9aa;   /* hairline */
+  --parchment:  #2a2317;   /* headings — now a dark warm ink */
+  --ink:        #4a4030;   /* body text */
+  --ink-dim:    #6e6450;   /* captions — clears AA on the light surfaces */
+  --gold:       #b8911c;
+  --gold-soft:  #876908;   /* accent numbers on light — deep enough to read */
+  --gold-bright:#caa42a;
+  --W: #e4d59a;            /* deeper cream so the White pip reads on parchment */
+}

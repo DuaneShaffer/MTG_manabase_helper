@@ -2,31 +2,11 @@
    Manabase — landing page
    Same world as the app: a deckbuilder's table at night, the five
    WUBRG colors as glowing light sources, legendary gold the unifier.
-   Tokens mirror docs/styles.css so the page and the tool read as one product.
+   Shared tokens live in docs/tokens.css so the page and the tool read as one product.
    ============================================================ */
 :root {
-  --table:      #14110e;
-  --table-2:    #1b1712;
-  --surface:    #221d17;
-  --surface-2:  #2b251d;
-  --line:       #3a3127;
-  --parchment:  #ece2cc;
-  --ink:        #b6ab93;
-  --ink-dim:    #9d9079;
-  --gold:       #c9a227;
-  --gold-soft:  #d8b94a;
-  --gold-bright:#e8c95a;
-
-  --W: #efe9c9;  --U: #2f7bd0;  --B: #8b7d93;  --R: #d2402f;  --G: #34a865;
-
-  /* reliability ramp — mirrors the app's calm green→amber→clay scale (no alarm-red) */
-  --grade-A: #3fae6b; --grade-B: #7bbf94; --grade-C: #c9a227;
-  --grade-D: #cf9244; --grade-F: #bf7a5a;
-
-  --font-display: "Cinzel", Georgia, serif;
-  --font-ui: "Inter", system-ui, -apple-system, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-
+  /* shared palette / grade ramp / font stacks come from tokens.css (loaded first);
+     the landing keeps its own deeper shadow and page width */
   --shadow: 0 18px 50px -18px rgba(0,0,0,.8);
   --maxw: 1140px;
 }
@@ -298,18 +278,7 @@ html.js .reveal { opacity: 0; transform: translateY(16px); transition: opacity .
    the default; this overrides the palette plus the dark-only veils.
    ============================================================ */
 :root[data-theme="light"] {
-  --table:      #efe6d3;
-  --table-2:    #e4d6ba;
-  --surface:    #fbf6ec;
-  --surface-2:  #f1e8d5;
-  --line:       #d8c9aa;
-  --parchment:  #2a2317;
-  --ink:        #4a4030;
-  --ink-dim:    #6e6450;
-  --gold:       #b8911c;
-  --gold-soft:  #876908;
-  --gold-bright:#caa42a;
-  --W: #e4d59a;                 /* deeper cream so the White pip reads on parchment */
+  /* the shared palette flip lives in tokens.css; the landing keeps its own shadow */
   --shadow: 0 18px 50px -20px rgba(70,52,20,.4);
 }
 /* the sticky nav veil flips from a dark wash to a light one */

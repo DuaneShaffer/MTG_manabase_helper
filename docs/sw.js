@@ -8,9 +8,8 @@
 // All precache URLs are relative so the project-pages path
 // (/MTG_manabase_helper/) resolves correctly.
 
-const VERSION = "2026-07-01";
+const VERSION = "2026-07-01-2";
 const SHELL_CACHE = "mb-shell-" + VERSION;   // app shell + data snapshots (versioned)
-const FONT_CACHE = "mb-fonts-v1";            // Google Fonts (persistent)
 const IMAGE_CACHE = "mb-images-v1";          // Scryfall card images (persistent, capped)
 const IMAGE_CACHE_MAX = 200;
 
@@ -20,6 +19,9 @@ const PRECACHE = [
   "index.html",
   "styles.css",
   "landing.css",
+  "tokens.css",
+  "fonts/cinzel-latin.woff2",
+  "fonts/inter-latin.woff2",
   "manifest.json",
   "favicon.svg",
   "example_deck.txt",
@@ -51,7 +53,7 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  const keep = new Set([SHELL_CACHE, FONT_CACHE, IMAGE_CACHE]);
+  const keep = new Set([SHELL_CACHE, IMAGE_CACHE]);
   event.waitUntil(
     caches.keys()
       .then((names) => Promise.all(
@@ -134,12 +136,6 @@ self.addEventListener("fetch", (event) => {
   // Card images: runtime cache, capped — the pool is far too large to precache.
   if (url.hostname === "cards.scryfall.io") {
     event.respondWith(cappedImageCache(request));
-    return;
-  }
-
-  // Google Fonts (stylesheet + woff2): cache-first; opaque responses are fine.
-  if (url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com") {
-    event.respondWith(cacheFirst(request, FONT_CACHE));
     return;
   }
 

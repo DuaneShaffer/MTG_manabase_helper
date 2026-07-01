@@ -20,9 +20,8 @@
   <meta name="twitter:title" content="Manabase — Standard source calculator">
   <meta name="twitter:description" content="Build and grade a Standard manabase: per-color source requirements, card-by-card castability, and a recommended set of lands.">
   <meta name="twitter:image" content="https://duaneshaffer.github.io/MTG_manabase_helper/og-image.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/cinzel-latin.woff2" as="font" type="font/woff2" crossorigin>
   <!-- Set the theme before the stylesheet paints (saved choice, else system preference) so there's no flash. -->
   <script>
     (function () {
@@ -33,6 +32,7 @@
       } catch (e) { document.documentElement.dataset.theme = "dark"; }
     })();
   </script>
+  <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -67,7 +67,9 @@
         <div class="deck-actions">
           <button class="btn btn-gold" id="analyzeBtn">Analyze deck</button>
           <button class="btn btn-ghost" id="exampleBtn">Load example</button>
+          <button class="btn btn-ghost" id="fileBtn" type="button" aria-label="Load a decklist file">Load file…</button>
           <button class="btn btn-ghost" id="clearBtn">Clear</button>
+          <input type="file" id="deckFile" accept=".txt,.dec,.dek,text/plain" hidden aria-hidden="true" tabindex="-1">
         </div>
         <div class="confidence">
           <label for="confSel">Target confidence
@@ -106,8 +108,16 @@
         <div class="build-list-wrap" id="buildWrap" hidden>
           <div class="build-head">
             <span class="build-title">Your build</span>
-            <span class="build-dilution" id="buildDilution"></span>
+            <span class="build-dilution-wrap">
+              <span class="build-dilution" id="buildDilution"></span>
+              <button class="info-dot" id="dilutionInfo" aria-label="What colored-source dilution means" aria-expanded="false" hidden>i</button>
+            </span>
           </div>
+          <p class="why-note" id="dilutionNote" hidden>Every land that makes no colored mana dilutes your
+            colored sources — the more utility lands, the less often the right colors arrive on time.
+            A few are fine when every color is comfortably covered; this line turns amber when
+            colorless/utility lands top ~15% of the build while a color's sources (lands plus any
+            dork/rock credit) still fall short of its requirement.</p>
           <div class="build-list" id="buildList"></div>
         </div>
 
