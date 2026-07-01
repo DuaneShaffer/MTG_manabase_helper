@@ -15,6 +15,7 @@
   <meta property="og:image" content="https://duaneshaffer.github.io/MTG_manabase_helper/og-image.png">
   <meta property="og:url" content="https://duaneshaffer.github.io/MTG_manabase_helper/">
   <meta property="og:type" content="website">
+  <link rel="canonical" href="https://duaneshaffer.github.io/MTG_manabase_helper/">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Manabase — will your deck cast its spells?">
   <meta name="twitter:description" content="Paste a Standard decklist and see, card by card, how reliably your lands deliver the right colors on curve.">
@@ -22,9 +23,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <!-- Same theme as the app: set it before paint (shared 'mtg_theme' key, else system preference). -->
+  <!-- Same theme as the app: set it before paint (shared 'mtg_theme' key, else system preference).
+       Also marks <html> as JS-capable so the scroll-reveal styles only hide content
+       when the script that reveals it will actually run. -->
   <script>
     (function () {
+      document.documentElement.classList.add("js");
       try {
         var t = localStorage.getItem("mtg_theme") ||
           (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");

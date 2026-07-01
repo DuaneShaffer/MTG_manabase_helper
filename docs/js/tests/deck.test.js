@@ -51,6 +51,90 @@ test("parse bare qty name line, headers and blanks skipped", () => {
   assert.strictEqual(e.collector, null);
 });
 
+test("4x / x4 quantity tokens parse as quantities, not section headers", () => {
+  const entries = parseDeckText("4x Lightning Bolt\nX2 Shock\n1 Mountain (DMU) 269\n3X Frostbite");
+  assert.strictEqual(entries.length, 4);
+  assert.deepStrictEqual(
+    entries.map((e) => [e.qty, e.name]),
+    [[4, "Lightning Bolt"], [2, "Shock"], [1, "Mountain"], [3, "Frostbite"]],
+  );
+  // Crucially, none of them got mistaken for a header: everything stays "deck".
+  assert.ok(entries.every((e) => e.section === "deck"));
+  // And the 4x style still supports the (SET) COLLECTOR suffix.
+  const [bolt] = parseDeckText("4x Lightning Bolt (STA) 42");
+  assert.strictEqual(bolt.qty, 4);
+  assert.strictEqual(bolt.name, "Lightning Bolt");
+  assert.strictEqual(bolt.set, "STA");
+  assert.strictEqual(bolt.collector, "42");
+});
+
+test("names containing parentheses still parse", () => {
+  // A parenthesized word inside the name must not be mistaken for the set code.
+  const [a] = parseDeckText("4 Hazmat Suit (Used)");
+  assert.strictEqual(a.name, "Hazmat Suit (Used)");
+  assert.strictEqual(a.set, null);
+  const [b] = parseDeckText("4 Hazmat Suit (Used) (UST) 33");
+  assert.strictEqual(b.name, "Hazmat Suit (Used)");
+  assert.strictEqual(b.set, "UST");
+  assert.strictEqual(b.collector, "33");
+});
+
+// --- blank-line sideboard heuristic (headerless exports) ---
+
+test("(a) explicit headers: blank lines never switch sections", () => {
+  // Blank between the Deck header and its cards, blanks inside a headered
+  // section, and a blank before the Sideboard header — none may re-section.
+  const text = "Deck\n\n4 Plains\n\n\n4 Island\n\nSideboard\n\n2 Negate";
+  const entries = parseDeckText(text);
+  assert.deepStrictEqual(
+    entries.map((e) => [e.name, e.section]),
+    [["Plains", "deck"], ["Island", "deck"], ["Negate", "sideboard"]],
+  );
+});
+
+test("(b) no headers, no blanks: everything is maindeck", () => {
+  const entries = parseDeckText("4 Plains\n4 Island\n2 Negate");
+  assert.ok(entries.every((e) => e.section === "deck"));
+  assert.strictEqual(deckEntries(entries).length, 3);
+});
+
+test("(c) no headers, one blank block: cards after it are the sideboard", () => {
+  const entries = parseDeckText("4 Plains\n4 Island\n\n2 Negate\n1 Duress");
+  assert.deepStrictEqual(
+    entries.map((e) => [e.name, e.section]),
+    [["Plains", "deck"], ["Island", "deck"], ["Negate", "sideboard"], ["Duress", "sideboard"]],
+  );
+  // A RUN of blank lines is one separator, and later blanks don't invent
+  // further sections — everything after the first break stays sideboard.
+  const runs = parseDeckText("4 Plains\n\n\n\n2 Negate\n\n1 Duress");
+  assert.deepStrictEqual(
+    runs.map((e) => [e.name, e.section]),
+    [["Plains", "deck"], ["Negate", "sideboard"], ["Duress", "sideboard"]],
+  );
+});
+
+test("(d) leading blank lines don't trigger the sideboard switch", () => {
+  const entries = parseDeckText("\n\n4 Plains\n4 Island");
+  assert.ok(entries.every((e) => e.section === "deck"));
+  // ...but a later blank block still separates the sideboard as usual.
+  const mixed = parseDeckText("\n4 Plains\n\n2 Negate");
+  assert.deepStrictEqual(
+    mixed.map((e) => [e.name, e.section]),
+    [["Plains", "deck"], ["Negate", "sideboard"]],
+  );
+});
+
+test("headerless heuristic works with 4x-style quantities too", () => {
+  // The 4x fix and the blank-line heuristic have to compose: a 4x line is a
+  // CARD (not a header), so the list counts as headerless and the blank
+  // separates the sideboard.
+  const entries = parseDeckText("4x Lightning Bolt\n\n2x Duress");
+  assert.deepStrictEqual(
+    entries.map((e) => [e.name, e.section]),
+    [["Lightning Bolt", "deck"], ["Duress", "sideboard"]],
+  );
+});
+
 // --- recommend ---
 
 const plains = { name: "Plains", colors: ["W"], basic: true, tapped: false };

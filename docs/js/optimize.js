@@ -86,17 +86,32 @@ const MAX_UTILITY = 3;      // most utility lands any one build will run
 // Lazy-load the vendored solver. In the browser it injects a classic <script>
 // that sets window.solver; in Node a test can pre-set globalThis.solver and this
 // returns it without touching the DOM.
-let _solverPromise = null;
-function loadSolver() {
-  if (typeof globalThis !== "undefined" && globalThis.solver) return Promise.resolve(globalThis.solver);
-  if (_solverPromise) return _solverPromise;
-  _solverPromise = new Promise((resolve, reject) => {
+//
+// The script-injection step lives in its own function so loadSolver's caching
+// policy is testable without a DOM (tests inject a fake loader).
+function injectSolverScript() {
+  return new Promise((resolve, reject) => {
     const s = document.createElement("script");
     s.src = new URL("./vendor/lp-solver.js", import.meta.url).href;
     s.onload = () => (globalThis.solver ? resolve(globalThis.solver) : reject(new Error("optimizer failed to initialize")));
     s.onerror = () => reject(new Error("couldn't load the optimizer"));
     document.head.appendChild(s);
   });
+}
+
+let _solverPromise = null;
+export function loadSolver(load = injectSolverScript) {
+  if (typeof globalThis !== "undefined" && globalThis.solver) return Promise.resolve(globalThis.solver);
+  if (_solverPromise) return _solverPromise;
+  _solverPromise = Promise.resolve()
+    .then(load)
+    .catch((err) => {
+      // Only cache SUCCESS. A flaky script load must not stick the whole
+      // session on the greedy fallback: clear the cached promise so the next
+      // Recommend click retries the load.
+      _solverPromise = null;
+      throw err;
+    });
   return _solverPromise;
 }
 

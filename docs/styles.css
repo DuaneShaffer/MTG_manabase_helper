@@ -139,7 +139,7 @@ body {
   max-width: 1680px; margin: 0 auto;
 }
 .panel { position: sticky; top: 86px; display: flex; flex-direction: column; gap: 18px; }
-section.deck-input, section.dashboard, section.tools {
+section.deck-input, section.dashboard {
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow);
 }
@@ -566,7 +566,6 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 .grid-wrap { min-height: 60vh; }
 .grid-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
 .grid-head #gridCount { font-family: var(--font-display); font-size: 15px; color: var(--parchment); letter-spacing: .04em; }
-.grid-sub { font-size: 12px; color: var(--ink-dim); }
 .grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
   gap: 16px;
@@ -593,7 +592,7 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
   padding: 4px; backdrop-filter: blur(4px); opacity: 0; transform: translateY(6px);
   transition: opacity .14s, transform .14s;
 }
-.tile:hover .stepper, .tile.added .stepper { opacity: 1; transform: none; }
+.tile:hover .stepper, .tile:focus-within .stepper, .tile.added .stepper { opacity: 1; transform: none; }
 .step-btn {
   width: 28px; height: 28px; border-radius: 50%; border: none; cursor: pointer;
   background: var(--surface-2); color: var(--parchment); font-size: 16px; line-height: 1;
@@ -694,6 +693,10 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
 @media (hover: none) {
   .stepper { opacity: 1; transform: none; }
   .build-row .b-step { opacity: 1; }
+  /* The cost tag is hover-revealed too — keep it quiet but reachable: dimmed at
+     rest, full on press (an active override already pins it lit at full). */
+  .cost-tag { opacity: .6; }
+  .cost-tag:active { opacity: 1; }
 }
 @media (max-width: 920px) {
   .layout { grid-template-columns: 1fr; }
@@ -702,6 +705,16 @@ svg.axis-ico.timing { display: block; color: var(--parchment); }
   .info-dot { width: 28px; height: 28px; font-size: 13px; }
   .icon-btn { padding: 4px 10px; }
   .step-btn { width: 32px; height: 32px; }
+  /* …including the build-list minis (their 22px base outspecifies .step-btn above)
+     and the on-card tags; the grid centering keeps the glyphs true. */
+  .build-row .b-mini { width: 32px; height: 32px; font-size: 16px; }
+  .smooth-tag, .dig-tag, .cost-tag { width: 28px; height: 28px; font-size: 13px; }
+  .spell:has(.smooth-tag) .cost-tag, .spell:has(.dig-tag) .cost-tag { right: 40px; }
+  /* 16px floor on text inputs so iOS Safari doesn't zoom the page on focus;
+     padding eases off to keep the controls close to their desktop footprint. */
+  #deckText { font-size: 16px; }
+  .grid-controls input { font-size: 16px; padding: 5px 10px; }
+  .dt-field select, .dt-field input { font-size: 16px; padding: 4px 6px; }
   /* The sticky grade HUD is gone on mobile — pin a compact read-out bottom-right
      so editing lands deep in the grid still shows the deck's overall castability. */
   .mobile-grade:not([hidden]) {

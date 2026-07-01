@@ -2,6 +2,7 @@
   "name": "Manabase — Standard source calculator",
   "short_name": "Manabase",
   "description": "Paste a Standard decklist and see, card by card, how reliably your lands deliver the right colors on curve — then build the manabase that fixes it.",
+  "id": "/MTG_manabase_helper/app.html",
   "start_url": "./app.html",
   "scope": "./",
   "display": "standalone",

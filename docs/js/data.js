@@ -32,7 +32,15 @@ export async function loadLandPopularity() {
 
 async function loadCards() {
   if (_cards) return _cards;
-  if (!_cardsPromise) _cardsPromise = fetch("data/cards.json").then((r) => r.json());
+  if (!_cardsPromise) {
+    _cardsPromise = fetch("data/cards.json").then((res) => {
+      if (!res.ok) throw new Error("data/cards.json failed to load (HTTP " + res.status + ")");
+      return res.json();
+    });
+    // A rejected promise must not stay cached — a transient network error would
+    // otherwise poison every deck resolve for the rest of the session.
+    _cardsPromise.catch(() => { _cardsPromise = null; });
+  }
   _cards = await _cardsPromise;
   return _cards;
 }
@@ -78,6 +86,7 @@ async function scryfallFallback(names) {
   const found = {};
   for (let i = 0; i < names.length; i += 75) {
     const batch = names.slice(i, i + 75);
+    if (i) await new Promise((r) => setTimeout(r, 100));  // courtesy pause between batches
     try {
       const res = await fetch(SCRYFALL + "/cards/collection", {
         method: "POST",
@@ -94,13 +103,17 @@ async function scryfallFallback(names) {
   return found;
 }
 
+// Resolve deck names to cards. Each resolved entry carries the input name it
+// resolved FROM — resolveLocal maps front-face and case-differing names to a
+// card whose canonical `.name` differs, so callers keying anything by name
+// (quantities especially) must re-key by `card.name` via this mapping.
 export async function resolveDeck(names) {
   const cards = await loadCards();
-  const resolved = [];
+  const entries = [];
   const localMissing = [];
   for (const n of names) {
     const c = resolveLocal(cards, n);
-    if (c) resolved.push(c);
+    if (c) entries.push({ card: c, inputName: n });
     else localMissing.push(n);
   }
   let missing = localMissing;
@@ -109,11 +122,11 @@ export async function resolveDeck(names) {
     missing = [];
     for (const n of localMissing) {
       const c = extra[n.toLowerCase()];
-      if (c) resolved.push(c);
+      if (c) entries.push({ card: c, inputName: n });
       else missing.push(n);
     }
   }
-  return { cards: resolved, missing };
+  return { entries, missing };
 }
 
 export async function loadExampleDeck() {

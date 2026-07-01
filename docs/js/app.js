@@ -8,6 +8,10 @@ import { manabaseAdvice } from "./advice.js";
 import { simulateDeck } from "./montecarlo.js";
 import { parseDeckText, deckEntries, cardNames } from "./decklist.js";
 import { loadLands, loadMeta, resolveDeck, loadExampleDeck, loadLandPopularity } from "./data.js";
+import {
+  encodeShare, decodeShare, UnsupportedShareError,
+  clampLandCounts, coerceConf, clampCopyOverrides, sanitizeCostOverrides,
+} from "./share.js";
 
 const STORAGE_KEY = "mtg_manabase_deck";
 
@@ -16,7 +20,7 @@ const state = {
   counts: {},
   requirements: { W: 0, U: 0, B: 0, R: 0, G: 0 },
   spells: [],          // colored deck spells for grading
-  deckCards: [],       // nonland deck cards {name, mv} for the curve
+  deckCards: [],       // nonland deck cards {name, mv, qty} for the curve
   deckSize: 60,
   landTarget: null,
   threshold: null,     // null = Karsten sliding; else flat float
@@ -39,7 +43,7 @@ const state = {
   digOverrides: {},    // name -> copies counted toward the sim
   costOverrides: {},   // name -> mana-cost STRING to use instead of the printed cost (kicker/X/free spells)
   resolvedCards: [],   // last analyzed deck's resolved Scryfall cards (for cost-override recompute)
-  qtyByName: {},       // name -> copies in the analyzed deck
+  qtyByName: {},       // CANONICAL card name -> copies in the analyzed deck
   conditionsPresent: new Set(),  // condition keywords across the land pool
   conditionsActive: new Set(),   // conditions the loaded deck satisfies
 };
@@ -599,7 +603,7 @@ function rebuildFromCosts() {
   for (const c of cards) {
     const cost = effectiveCost(c);
     const mv = manaValue(cost);
-    if (!isLandType(c.type)) state.deckCards.push({ name: c.name, mv });  // transform DFCs are spells on the curve
+    if (!isLandType(c.type)) state.deckCards.push({ name: c.name, mv, qty: qtyByName[c.name] || 1 });  // transform DFCs are spells on the curve
     const cons = costConstraints(cost);
     const cols = Object.keys(cons);
     const { hybrid } = parseCost(cost);
@@ -615,8 +619,10 @@ function rebuildFromCosts() {
       state.spells.push({ name: c.name, image: c.image, qty: qtyByName[c.name] || 1, mv, gold, pips, hybrids: hybrid, smooth: cheap, dig });
     }
   }
-  state.avgMV = state.deckCards.length
-    ? state.deckCards.reduce((s, c) => s + c.mv, 0) / state.deckCards.length : 3;
+  // Average MV weighted by copies — a playset weighs four times a one-of.
+  const mvQty = state.deckCards.reduce((s, c) => s + c.qty, 0);
+  state.avgMV = mvQty
+    ? state.deckCards.reduce((s, c) => s + c.mv * c.qty, 0) / mvQty : 3;
 
   // How much the deck leans on each color (total colored pips) and the card
   // setting each color's requirement — feeds the recommender's shortfall
@@ -664,18 +670,34 @@ function recomputeFromCosts() {
 }
 
 /* ---------- deck analysis (all local) ---------- */
+// Staleness token: a slow analyze (Scryfall fallback) must not overwrite the
+// state or localStorage of a newer one. Same pattern as _suggestRun/_recRun.
+let _analyzeRun = 0;
 async function analyzeDeck() {
   const text = $("#deckText").value.trim();
   const hint = $("#deckHint");
   if (!text) { hint.textContent = "Paste a decklist first."; hint.className = "hint warn"; return; }
   hint.textContent = "Analyzing…"; hint.className = "hint";
+  const run = ++_analyzeRun;
   try {
     const entries = deckEntries(parseDeckText(text), "deck");
-    const qtyByName = {};
+    const qtyByInput = {};
     let deckSize = 0;
-    for (const e of entries) { qtyByName[e.name] = (qtyByName[e.name] || 0) + e.qty; deckSize += e.qty; }
+    for (const e of entries) { qtyByInput[e.name] = (qtyByInput[e.name] || 0) + e.qty; deckSize += e.qty; }
     const names = cardNames(entries);
-    const { cards, missing } = await resolveDeck(names);
+    const { entries: resolved, missing } = await resolveDeck(names);
+    if (run !== _analyzeRun) return;  // superseded by a newer analyze
+
+    // Re-key quantities by the CANONICAL card name: a pasted "Hearth Elemental"
+    // resolves to "Hearth Elemental // Stoke Genius", and every downstream
+    // consumer looks quantities up by card.name. Two input lines resolving to
+    // the same card sum their copies (the card itself is kept once).
+    const qtyByName = {};
+    const cards = [];
+    for (const { card, inputName } of resolved) {
+      if (!(card.name in qtyByName)) cards.push(card);
+      qtyByName[card.name] = (qtyByName[card.name] || 0) + (qtyByInput[inputName] || 0);
+    }
 
     state.deckSize = deckSize || 60;
     const newDeck = text !== state.lastImportedDeck;
@@ -738,10 +760,15 @@ async function analyzeDeck() {
     if (dc) parts.push(`${dc} mid-cost card-advantage spell${dc === 1 ? "" : "s"} (+) help the simulation reach lands for your expensive spells (no change to the land count).`);
     if (state.conditionsActive.size) parts.push(`Conditional lands active for: ${[...state.conditionsActive].join(", ")}.`);
     if (landsOutsidePool) parts.push(`${landsOutsidePool} land(s) not in the Standard pool.`);
-    if (missing.length) parts.push(`${missing.length} card(s) not found.`);
+    if (missing.length) {
+      const shown = missing.slice(0, 5).join(", ");
+      const more = missing.length - 5;
+      parts.push(`${missing.length} card(s) not found: ${shown}${more > 0 ? `, …and ${more} more` : ""}.`);
+    }
     hint.className = "hint";
     hint.textContent = parts.join(" ");
   } catch (e) {
+    if (run !== _analyzeRun) return;  // a stale failure shouldn't clobber a newer run's hint
     hint.textContent = "Couldn't analyze: " + e.message; hint.className = "hint warn";
   }
 }
@@ -898,8 +925,16 @@ const simCache = { key: null, play: null, drawFull: null, drawCut: null, slack: 
 function simKey(drawCount, fetches) {
   const counts = {};
   for (const [n, c] of Object.entries(state.counts)) if (c > 0) counts[n] = c;
-  return JSON.stringify({ counts, drawCount, fetches, deck: state.deckSize,
-    req: state.requirements, spells: state.spells.map((s) => s.name) });
+  // Each land's EFFECTIVE colors/tapped: applyConditions mutates them in place,
+  // so the same counts can mean a different build. Likewise each spell's
+  // mv/pips/hybrids: a cost override can change them without moving the
+  // requirements at all.
+  const landSig = state.lands
+    .filter((l) => (state.counts[l.name] || 0) > 0)
+    .map((l) => l.name + ":" + l.colors.join("") + (l.tapped ? "T" : ""));
+  return JSON.stringify({ counts, landSig, drawCount, fetches, deck: state.deckSize,
+    req: state.requirements,
+    spells: state.spells.map((s) => [s.name, s.mv, s.pips, s.hybrids]) });
 }
 
 function doSimulate() {
@@ -1351,10 +1386,10 @@ function applyRecommendation() {
 // The current deck + chosen manabase as an Arena/MTGO-importable decklist.
 function decklistText() {
   const lines = ["Deck"];
-  const spellByName = new Map(state.spells.map((s) => [s.name, s]));
+  // deckCards carries every nonland (colorless spells aren't in state.spells),
+  // with quantities keyed by the canonical resolved name.
   for (const c of state.deckCards) {
-    const s = spellByName.get(c.name);
-    lines.push(`${s ? s.qty : 1} ${c.name}`);
+    lines.push(`${c.qty || 1} ${c.name}`);
   }
   const land = [];
   for (const l of state.lands) {
@@ -1443,48 +1478,17 @@ function exportAnalysisJSON() {
 }
 
 // --- shareable URL (deck + build encoded in the hash) ----------------------
-const _b64u = {
-  enc: (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
-  dec: (s) => {
-    s = s.replace(/-/g, "+").replace(/_/g, "/");
-    const bin = atob(s);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  },
-};
-
-async function encodeShare(payload) {
-  const json = JSON.stringify(payload);
-  // Compress with the built-in gzip stream when available; fall back to a plain
-  // (uncompressed) URI-encoded payload otherwise. The "z"/"u" prefix tags which.
-  if (typeof CompressionStream === "function") {
-    const cs = new CompressionStream("deflate-raw");
-    const writer = cs.writable.getWriter();
-    writer.write(new TextEncoder().encode(json)); writer.close();
-    const buf = new Uint8Array(await new Response(cs.readable).arrayBuffer());
-    return "z" + _b64u.enc(buf);
-  }
-  return "u" + encodeURIComponent(json);
-}
-
-async function decodeShare(hash) {
-  const tag = hash[0], body = hash.slice(1);
-  if (tag === "u") return JSON.parse(decodeURIComponent(body));
-  if (tag === "z") {
-    const ds = new DecompressionStream("deflate-raw");
-    const writer = ds.writable.getWriter();
-    writer.write(_b64u.dec(body)); writer.close();
-    const text = await new Response(ds.readable).text();
-    return JSON.parse(text);
-  }
-  return null;
-}
-
+// Codec + payload validation live in share.js (Node-testable). v2 payloads also
+// carry the per-card tweaks (cost / draw-ramp overrides) so a shared analysis
+// renders exactly what the sender saw; v1 links simply have none.
 async function copyShareLink() {
   const deck = state.lastImportedDeck || $("#deckText").value.trim();
   if (!deck) { $("#exportCopied").textContent = "Analyze a deck first."; return; }
-  const payload = { v: 1, deck, conf: state.threshold, lands: { ...state.counts } };
+  const payload = {
+    v: 2, deck, conf: state.threshold, lands: { ...state.counts },
+    costOverrides: { ...state.costOverrides },
+    smooth: { ...state.smoothOverrides }, dig: { ...state.digOverrides },
+  };
   const url = location.origin + location.pathname + "#" + (await encodeShare(payload));
   $("#exportText").value = url;
   navigator.clipboard?.writeText(url).then(
@@ -1493,21 +1497,52 @@ async function copyShareLink() {
   );
 }
 
+// The confidence choices the app offers (#confSel) — a shared conf outside this
+// set is ignored rather than trusted.
+const CONF_VALUES = [0.90, 0.95, 0.99];
+
 // Reconstruct a shared analysis from location.hash, if present. Returns true if it
-// handled a link (so boot skips the localStorage path).
+// handled a link (so boot skips the localStorage path). Every payload field is
+// validated/clamped — a share link is arbitrary attacker-controlled text.
 async function loadFromShareLink() {
   const hash = location.hash.slice(1);
   if (!hash) return false;
   let payload;
-  try { payload = await decodeShare(hash); } catch { return false; }
-  if (!payload || !payload.deck) return false;
+  try {
+    payload = await decodeShare(hash);
+  } catch (e) {
+    // A compressed ("z") link in a browser without DecompressionStream: say so
+    // instead of silently showing the local deck as if it were the shared one.
+    if (e instanceof UnsupportedShareError) {
+      const hint = $("#deckHint");
+      hint.textContent = "This share link is compressed and your browser can't open it. Try a current Chrome, Edge, Firefox or Safari.";
+      hint.className = "hint warn";
+      return true;
+    }
+    return false;
+  }
+  if (!payload || typeof payload.deck !== "string" || !payload.deck) return false;
   $("#deckText").value = payload.deck;
-  if (payload.conf != null) { $("#confSel").value = String(payload.conf); state.threshold = payload.conf; }
+  const conf = coerceConf(payload.conf, CONF_VALUES);
+  if (conf != null) { $("#confSel").value = String(conf); state.threshold = conf; }
   await analyzeDeck();
+  // v2: the sender's per-card tweaks, applied after analyze (which reset them)
+  // and clamped against the deck the analysis actually produced.
+  const cost = sanitizeCostOverrides(payload.costOverrides);
+  const smooth = clampCopyOverrides(payload.smooth, state.smoothCards);
+  const dig = clampCopyOverrides(payload.dig, state.digCards);
+  Object.assign(state.costOverrides, cost);
+  Object.assign(state.smoothOverrides, smooth);
+  Object.assign(state.digOverrides, dig);
+  if (Object.keys(cost).length || Object.keys(smooth).length || Object.keys(dig).length) {
+    recomputeFromCosts();
+  }
   // Apply the shared custom build after analyze (analyze seeds counts from the
-  // deck's own lands; this overrides with the exact shared manabase).
-  if (payload.lands && Object.keys(payload.lands).length) {
-    state.counts = { ...payload.lands };
+  // deck's own lands; this overrides with the exact shared manabase). Counts are
+  // clamped to known lands at legal quantities.
+  const counts = clampLandCounts(payload.lands, (name) => state.tiles.get(name)?.land || null);
+  if (Object.keys(counts).length) {
+    state.counts = counts;
     syncCountsToTiles();
     applyVisibility();
     markFixers();
@@ -1544,9 +1579,11 @@ function drawQueryParams() {
   const custom = !sel || sel.value === "__custom__";
   $("#drawCustoms").hidden = !custom;
   if (custom) {
+    // More copies than cards in the deck reads as a misleading 0% — clamp.
+    const population = Math.max(1, parseInt($("#drawPop").value, 10) || 60);
     return {
-      population: Math.max(1, parseInt($("#drawPop").value, 10) || 60),
-      successes: Math.max(0, parseInt($("#drawSucc").value, 10) || 0),
+      population,
+      successes: Math.min(population, Math.max(0, parseInt($("#drawSucc").value, 10) || 0)),
       label: "this card",
     };
   }
@@ -1567,11 +1604,23 @@ function recomputeDrawOdds() {
   const onPlay = $("#drawPlay").value !== "draw";
   const p = drawOddsByTurn(population, successes, k, turn, onPlay);
   const copies = successes === 1 ? "copy" : "copies";
-  readout.innerHTML =
-    `<strong>${(p * 100).toFixed(1)}%</strong> to draw ≥${k} of ${successes} ${copies}` +
-    ` of ${label === "this card" ? "this card" : `<span class="dt-name">${label}</span>`}` +
-    ` by turn ${turn} on the ${onPlay ? "play" : "draw"}` +
-    `<span class="dt-sub"> · from ${population} cards</span>`;
+  // Built with DOM nodes: `label` is a raw user-typed card name (share links
+  // auto-analyze arbitrary deck text), so it must never reach innerHTML.
+  readout.textContent = "";
+  const strong = el("strong");
+  strong.textContent = `${(p * 100).toFixed(1)}%`;
+  readout.append(strong, ` to draw ≥${k} of ${successes} ${copies} of `);
+  if (label === "this card") {
+    readout.append("this card");
+  } else {
+    const name = el("span", "dt-name");
+    name.textContent = label;
+    readout.append(name);
+  }
+  readout.append(` by turn ${turn} on the ${onPlay ? "play" : "draw"}`);
+  const sub = el("span", "dt-sub");
+  sub.textContent = ` · from ${population} cards`;
+  readout.append(sub);
   // Per-turn line: P(>=k) at turns 1..10, as horizontal bars (house .bar idiom).
   chart.innerHTML = "";
   for (let tt = 1; tt <= 10; tt++) {

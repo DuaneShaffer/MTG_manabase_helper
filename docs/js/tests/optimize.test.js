@@ -7,7 +7,32 @@
 
 import fs from "fs";
 import assert from "assert";
-import { buildLandModel, candidatePool, summarize, optimizeManabase, battleTested, setLandPopularity, OBJECTIVES } from "../optimize.js";
+import { buildLandModel, candidatePool, summarize, optimizeManabase, battleTested, setLandPopularity, loadSolver, OBJECTIVES } from "../optimize.js";
+
+let passed = 0;
+const ok = (name, cond) => { assert.ok(cond, name); console.log("ok - " + name); passed++; };
+
+// --- loadSolver caching: failure must not stick ----------------------------
+// These run BEFORE the bundle sets globalThis.solver (which short-circuits the
+// loader entirely). The script-injection step is injectable, so the caching
+// policy is exercised with fake loaders and no DOM.
+{
+  let attempts = 0;
+  const failing = () => { attempts++; return Promise.reject(new Error("flaky network")); };
+  const working = () => { attempts++; return Promise.resolve({ Solve: () => ({}) }); };
+
+  let firstErr = null;
+  await loadSolver(failing).catch((e) => { firstErr = e; });
+  ok("loadSolver: a failed load rejects", firstErr instanceof Error);
+
+  // The failure must NOT be cached: the next call retries and succeeds.
+  const solver = await loadSolver(working);
+  ok("loadSolver: retries after a failure (cache cleared)", attempts === 2 && typeof solver.Solve === "function");
+
+  // Success IS cached: a later call returns it without invoking the loader.
+  const again = await loadSolver(failing);
+  ok("loadSolver: caches success (loader not re-invoked)", attempts === 2 && again === solver);
+}
 
 // --- load the vendored solver into globalThis.solver -----------------------
 const bundle = fs
@@ -19,9 +44,6 @@ const bundle = fs
 globalThis.window = globalThis; // bundle does: "object"==typeof window ? window.solver = ...
 (0, eval)(bundle);
 assert.ok(globalThis.solver && typeof globalThis.solver.Solve === "function", "solver loaded");
-
-let passed = 0;
-const ok = (name, cond) => { assert.ok(cond, name); console.log("ok - " + name); passed++; };
 
 // A compact, deterministic land pool for a U/B deck.
 const LANDS = [

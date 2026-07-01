@@ -15,6 +15,7 @@
   <meta property="og:image" content="https://duaneshaffer.github.io/MTG_manabase_helper/og-image.png">
   <meta property="og:url" content="https://duaneshaffer.github.io/MTG_manabase_helper/app.html">
   <meta property="og:type" content="website">
+  <link rel="canonical" href="https://duaneshaffer.github.io/MTG_manabase_helper/app.html">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Manabase — Standard source calculator">
   <meta name="twitter:description" content="Build and grade a Standard manabase: per-color source requirements, card-by-card castability, and a recommended set of lands.">
@@ -163,7 +164,7 @@
         </div>
         <!-- Always-visible key for the two readings each card carries — the product's
              core idea, taught at the point of contact rather than only behind the (i). -->
-        <div class="strip-legend" aria-hidden="true">
+        <div class="strip-legend">
           <span class="sl-item">
             <span class="axis-ico colors"></span>
             <span class="sl-t"><strong>colors</strong> — if you hit your land drops</span>
@@ -223,7 +224,7 @@
           <button class="chip" id="raresToggle">Rares only</button>
           <button class="chip chip-guide" id="suggestToggle" disabled
             title="Glow the lands that supply a color you're still short on — guidance, not a filter.">Highlight fixers</button>
-          <input type="search" id="searchBox" placeholder="Search lands…" autocomplete="off">
+          <input type="search" id="searchBox" placeholder="Search lands…" autocomplete="off" aria-label="Search lands">
           <select id="sortSel" aria-label="Sort lands">
             <option value="name">Sort: name</option>
             <option value="color">Sort: color</option>

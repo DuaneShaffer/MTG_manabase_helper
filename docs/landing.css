@@ -18,7 +18,10 @@
   --gold-bright:#e8c95a;
 
   --W: #efe9c9;  --U: #2f7bd0;  --B: #8b7d93;  --R: #d2402f;  --G: #34a865;
-  --grade-A: #34a865;
+
+  /* reliability ramp — mirrors the app's calm green→amber→clay scale (no alarm-red) */
+  --grade-A: #3fae6b; --grade-B: #7bbf94; --grade-C: #c9a227;
+  --grade-D: #cf9244; --grade-F: #bf7a5a;
 
   --font-display: "Cinzel", Georgia, serif;
   --font-ui: "Inter", system-ui, -apple-system, sans-serif;
@@ -185,7 +188,7 @@ a { color: inherit; }
 .grade-num {
   font-family: var(--font-display); font-weight: 700; font-size: 36px; line-height: 1;
   color: var(--grade-A); font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 22px rgba(52,168,101,.5);
+  text-shadow: 0 0 22px rgba(63,174,107,.5);
 }
 @keyframes gradePop { from { opacity: 0; transform: scale(.7); } to { opacity: 1; transform: scale(1); } }
 .grade-num.show { animation: gradePop .45s cubic-bezier(.2,.9,.3,1.3) both; }
@@ -247,9 +250,9 @@ a { color: inherit; }
 .band { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--parchment); font-variant-numeric: tabular-nums; }
 .band i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 .band em { color: var(--ink-dim); font-style: normal; }
-.band[data-g="A"] i{ background: #34a865; } .band[data-g="B"] i{ background: #6fb98a; }
-.band[data-g="C"] i{ background: #c9a227; } .band[data-g="D"] i{ background: #d98a3a; }
-.band[data-g="F"] i{ background: #d2402f; }
+.band[data-g="A"] i{ background: var(--grade-A); } .band[data-g="B"] i{ background: var(--grade-B); }
+.band[data-g="C"] i{ background: var(--grade-C); } .band[data-g="D"] i{ background: var(--grade-D); }
+.band[data-g="F"] i{ background: var(--grade-F); }
 
 /* final CTA */
 .cta-final { text-align: center; }
@@ -267,17 +270,17 @@ a { color: inherit; }
 .foot .foot-links { display: flex; gap: 22px; flex-wrap: wrap; }
 
 /* ---------- scroll reveal ---------- */
-.reveal { opacity: 0; transform: translateY(16px); transition: opacity .6s ease, transform .6s ease; }
+/* Gated on html.js (set by the pre-paint script) so a no-JS visit still sees
+   every section — without JS nothing would ever add .in. */
+html.js .reveal { opacity: 0; transform: translateY(16px); transition: opacity .6s ease, transform .6s ease; }
 .reveal.in { opacity: 1; transform: none; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 900px) {
   .hero-inner { grid-template-columns: 1fr; gap: 40px; }
   .method { grid-template-columns: 1fr; gap: 30px; }
-  .features-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 560px) {
-  .features-grid { grid-template-columns: 1fr; }
   .readout { flex-direction: column; align-items: flex-start; gap: 16px; }
   .pip { width: 34px; height: 34px; font-size: 14px; }
   .nav-link { padding: 8px 12px; }
@@ -285,7 +288,7 @@ a { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   * { transition: none !important; }
-  .reveal { opacity: 1; transform: none; }
+  html.js .reveal { opacity: 1; transform: none; }
   .grade-num { opacity: 1; transform: none; }
 }
 
