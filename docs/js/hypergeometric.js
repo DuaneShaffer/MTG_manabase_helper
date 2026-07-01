@@ -9,6 +9,7 @@
 // a string of their arguments, mirroring Python's lru_cache.
 
 import { COLORS } from "./colors.js";
+import { recommendLandCount } from "./recommend.js";
 
 const THRESHOLD_CAP = 0.99; // targets above this can be unreachable; clamp
 
@@ -113,6 +114,41 @@ export function thresholdFor(mv) {
  */
 export function assumedLandCount(deckSize) {
   return Math.max(1, pyRound((deckSize * 25) / 60));
+}
+
+/**
+ * Intended final deck size for a SPELL-ONLY pasted list: the smallest deck
+ * (>= 60) that self-consistently holds `spellCount` spells plus its own
+ * recommended land count, i.e. the fixed point of
+ *
+ *   deckSize = max(60, spellCount + recommendLandCount(avgMV, deckSize, smooth))
+ *
+ * recommendLandCount is linear in deckSize before its rounding/clamping, so
+ * the closed form deckSize = S / (1 - base60/60) seeds the answer; a short
+ * monotone iteration then settles the exact rounded/clamped fixed point
+ * (recommendLandCount is nondecreasing in deckSize with slope < 1, so the
+ * iteration converges — no oscillation).
+ *
+ * For the common case (36 spells, ~24-land curve) this is exactly 60.
+ * @param {number} spellCount  total nonland cards pasted
+ * @param {number} avgMV
+ * @param {number} [smoothCount=0]
+ * @returns {number}
+ */
+export function assumedDeckSize(spellCount, avgMV, smoothCount = 0) {
+  if (spellCount <= 0) return 60;
+  // Closed-form seed (regression constants mirror recommendLandCount; the
+  // iteration below is authoritative, this only picks the starting point).
+  const discount = Math.min(3, 0.28 * smoothCount);
+  const base60 = 19.59 + 1.90 * avgMV - discount;
+  const landRatio = Math.max(0, Math.min(base60, 28)) / 60; // 28 = the clamp ceiling
+  let d = Math.max(60, Math.round(spellCount / (1 - landRatio)));
+  for (let i = 0; i < 20; i++) {
+    const next = Math.max(60, spellCount + recommendLandCount(avgMV, d, smoothCount));
+    if (next === d) break;
+    d = next;
+  }
+  return d;
 }
 
 // Python's round() uses banker's rounding (round-half-to-even).
@@ -234,7 +270,15 @@ export function grade(probability) {
 }
 
 /**
- * Exact multivariate castability (no Python equivalent).
+ * Approximate multivariate castability from per-color source COUNTS alone.
+ *
+ * DEPRECATED as the primary gold-card model: it assumes the per-color source
+ * buckets are disjoint (a WU dual credited to both colors gets floor-scaled
+ * into separate W and U buckets when the counts oversubscribe the land total),
+ * which systematically underestimates dual-heavy manabases. Prefer
+ * buildCastable(), which models the ACTUAL land composition exactly. This is
+ * kept only as the graceful fallback for grading without a concrete build
+ * (per-color source counts are all the information there is).
  *
  * Probability of having >= each color's required pips simultaneously AND
  * >= mv total lands, conditioned on >= mv lands. Sources per color are assumed
@@ -338,4 +382,143 @@ export function multivariateCastable(pipsByColor, mv, sourcesByColor, deckSize =
   }
 
   return denominator === 0n ? 0.0 : Number(numerator) / Number(denominator);
+}
+
+// --- exact gold-card castability against the ACTUAL build --------------------
+
+const _buildCache = new Map();
+
+/**
+ * Exact castability of a (possibly gold / hybrid) spell against the ACTUAL
+ * land build — no disjoint-bucket approximation. Each land is projected onto
+ * the card's needed color set C: its category is (effective colors ∩ C), so a
+ * WU dual is one land payable as EITHER pip. The deck is then the multivariate
+ * hypergeometric over these categories (plus lands producing none of C, plus
+ * nonlands), and a drawn multiset of lands pays the pips iff Hall's condition
+ * holds: for every non-empty subset S ⊆ C,
+ *
+ *   (# drawn lands producing a color in S) >= (# pips payable only within S)
+ *
+ * Hard pips of color c count toward every S containing c; a two-color hybrid
+ * pip counts toward S only when BOTH its colors lie in S — so hybrid pips are
+ * handled exactly, with no resolve-to-one-color approximation.
+ *
+ * Conditioning matches the univariate model: P(payable AND >= mv lands among
+ * `seen`) / P(>= mv lands), seen = cardsSeen(max(mv, total pips)). For a
+ * mono-color card (no hybrids) this reduces to — and returns via —
+ * castableProbability, exactly.
+ *
+ * @param {Object.<string,number>} pipsByColor  hard pips per color
+ * @param {number} mv
+ * @param {Array<[string,string]>} hybrids  two-color hybrid pip pairs
+ * @param {Array<{count:number, colors:string[]}>} landGroups  the real build,
+ *   each land with its EFFECTIVE colors
+ * @param {number} [deckSize=60]
+ * @param {boolean} [onPlay=true]
+ * @returns {number}
+ */
+export function buildCastable(pipsByColor, mv, hybrids, landGroups, deckSize = 60, onPlay = true) {
+  hybrids = hybrids || [];
+  // Needed color set C, in WUBRG order.
+  const inC = new Set();
+  for (const c of COLORS) if ((pipsByColor[c] || 0) > 0) inC.add(c);
+  for (const pair of hybrids) for (const c of pair) inC.add(c);
+  const C = COLORS.filter((c) => inC.has(c));
+  const k = C.length;
+
+  let totalLands = 0;
+  for (const g of landGroups) totalLands += g.count;
+
+  if (k === 0) return 1.0;
+  // Mono-color, no hybrids: the exact model reduces to the univariate one —
+  // bail to it (it's the hot path; gold cards are the minority).
+  if (k === 1 && hybrids.length === 0) {
+    const c = C[0];
+    let sources = 0;
+    for (const g of landGroups) if ((g.colors || []).includes(c)) sources += g.count;
+    return castableProbability(pipsByColor[c], mv, sources, deckSize, totalLands, onPlay);
+  }
+
+  const bit = {};
+  C.forEach((c, i) => { bit[c] = 1 << i; });
+  const nSub = 1 << k;
+
+  // Land categories: catCounts[mask] = lands whose effective colors ∩ C = mask
+  // (mask 0 = a land producing none of the needed colors — still a land drop).
+  const catCounts = new Array(nSub).fill(0);
+  for (const g of landGroups) {
+    let m = 0;
+    for (const c of g.colors || []) if (bit[c] !== undefined) m |= bit[c];
+    catCounts[m] += g.count;
+  }
+
+  // Pips that can only be paid from inside each color subset S.
+  let totalPips = hybrids.length;
+  for (const c of C) totalPips += pipsByColor[c] || 0;
+  const needsWithin = new Array(nSub).fill(0);
+  for (let S = 1; S < nSub; S++) {
+    let n = 0;
+    for (let i = 0; i < k; i++) if (S & (1 << i)) n += pipsByColor[C[i]] || 0;
+    for (const pair of hybrids) {
+      const m = bit[pair[0]] | bit[pair[1]];
+      if ((m & S) === m) n += 1;
+    }
+    needsWithin[S] = n;
+  }
+
+  const M = mv;
+  const seen = cardsSeen(Math.max(mv, totalPips), onPlay);
+  const nonland = Math.max(0, deckSize - totalLands);
+
+  const key = [
+    mv, deckSize, onPlay ? 1 : 0, C.join(""),
+    C.map((c) => pipsByColor[c] || 0).join(","),
+    hybrids.map((p) => bit[p[0]] | bit[p[1]]).sort((a, b) => a - b).join(","),
+    catCounts.join(","),
+  ].join("|");
+  const cached = _buildCache.get(key);
+  if (cached !== undefined) return cached;
+
+  // Only the categories actually present, and only the Hall subsets with a
+  // real demand, participate in the enumeration.
+  const cats = [];
+  for (let m = 0; m < nSub; m++) if (catCounts[m] > 0) cats.push({ mask: m, n: catCounts[m] });
+  const checks = [];
+  for (let S = 1; S < nSub; S++) if (needsWithin[S] > 0) checks.push(S);
+
+  // Numerator: sum over category compositions (a_0..a_c lands drawn per
+  // category, nonlands taking the rest of `seen`) that draw >= M lands AND
+  // satisfy Hall, of the multivariate-hypergeometric count.
+  let numerator = 0n;
+  const draws = new Array(cats.length).fill(0);
+  const recurse = (idx, drawnLands, weight) => {
+    if (idx === cats.length) {
+      if (drawnLands < M) return;
+      const nl = seen - drawnLands;
+      if (nl < 0 || nl > nonland) return;
+      for (const S of checks) {
+        let have = 0;
+        for (let j = 0; j < cats.length; j++) if (cats[j].mask & S) have += draws[j];
+        if (have < needsWithin[S]) return;
+      }
+      numerator += weight * comb(nonland, nl);
+      return;
+    }
+    const aMax = Math.min(cats[idx].n, seen - drawnLands);
+    for (let a = 0; a <= aMax; a++) {
+      draws[idx] = a;
+      recurse(idx + 1, drawnLands + a, weight * comb(cats[idx].n, a));
+    }
+  };
+  recurse(0, 0, 1n);
+
+  // Denominator: P(>= M lands among seen), identical to the univariate model.
+  let denominator = 0n;
+  for (let t = M; t <= Math.min(totalLands, seen); t++) {
+    denominator += comb(totalLands, t) * comb(nonland, seen - t);
+  }
+
+  const result = denominator === 0n ? 0.0 : Number(numerator) / Number(denominator);
+  _buildCache.set(key, result);
+  return result;
 }

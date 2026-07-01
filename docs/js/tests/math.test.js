@@ -8,6 +8,7 @@ import {
   cardsSeen,
   thresholdFor,
   assumedLandCount,
+  assumedDeckSize,
   conditionalProb,
   castableProbability,
   sourcesNeeded,
@@ -17,6 +18,7 @@ import {
   drawOddsByTurn,
 } from "../hypergeometric.js";
 import { sourcesFor, requirementsForCosts, requirementsForCards } from "../requirements.js";
+import { recommendLandCount } from "../recommend.js";
 
 let passed = 0;
 function check(desc, fn) {
@@ -139,6 +141,34 @@ check("assumedLandCount scaling", () => {
   assert.strictEqual(assumedLandCount(40), 17); // round(16.66..) = 17
   assert.strictEqual(assumedLandCount(99), 41); // round(41.25) = 41
 });
+// --- assumedDeckSize (spell-only lists model the intended final deck) ------
+check("assumedDeckSize: 36 spells around a ~24-land curve is exactly 60", () => {
+  // base = 19.59 + 1.90*2.32 = 23.998 -> 24 lands at 60 cards; 36 + 24 = 60.
+  assert.strictEqual(assumedDeckSize(36, 2.32, 0), 60);
+});
+check("assumedDeckSize is a fixed point of the land regression", () => {
+  for (const spells of [20, 30, 36, 40, 50, 60, 75]) {
+    for (const avgMV of [1.5, 2, 2.5, 3, 3.5, 4, 5]) {
+      for (const smooth of [0, 8]) {
+        const d = assumedDeckSize(spells, avgMV, smooth);
+        const want = Math.max(60, spells + recommendLandCount(avgMV, d, smooth));
+        assert.strictEqual(d, want,
+          `assumedDeckSize(${spells},${avgMV},${smooth}) = ${d}, not a fixed point (want ${want})`);
+        assert.ok(d >= 60, `deck size ${d} below 60`);
+      }
+    }
+  }
+});
+check("assumedDeckSize: more than a deck's worth of spells grows the deck", () => {
+  const d = assumedDeckSize(50, 3, 0);
+  assert.ok(d > 60, `50 spells should imply >60 cards, got ${d}`);
+  assert.strictEqual(d, 50 + recommendLandCount(3, d, 0));
+});
+check("assumedDeckSize: empty list keeps the 60-card default", () => {
+  assert.strictEqual(assumedDeckSize(0, 3, 0), 60);
+  assert.strictEqual(assumedDeckSize(-1, 3, 0), 60);
+});
+
 check("comb exact BigInt", () => {
   assert.strictEqual(comb(5, 2), 10n);
   assert.strictEqual(comb(60, 30), 118264581564861424n);

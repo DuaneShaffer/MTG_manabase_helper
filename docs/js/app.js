@@ -1,7 +1,7 @@
 import { COLORS, COLOR_NAMES } from "./colors.js";
 import { costConstraints, manaValue, parseCost } from "./mana.js";
 import { requirementsForCards } from "./requirements.js";
-import { castableProbability, multivariateCastable, grade, drawOddsByTurn } from "./hypergeometric.js";
+import { castableProbability, multivariateCastable, buildCastable, assumedDeckSize, grade, drawOddsByTurn } from "./hypergeometric.js";
 import { recommend as recommendManabase, recommendLandCount } from "./recommend.js";
 import { optimizeManabase, battleTested, OBJECTIVES, setLandPopularity } from "./optimize.js";
 import { manabaseAdvice } from "./advice.js";
@@ -22,7 +22,10 @@ const state = {
   requirements: { W: 0, U: 0, B: 0, R: 0, G: 0 },
   spells: [],          // colored deck spells for grading
   deckCards: [],       // nonland deck cards {name, mv, qty} for the curve
-  deckSize: 60,
+  deckSize: 60,        // the size every model runs at (assumed final size for spell-only lists)
+  pastedSize: 0,       // total pasted quantity (what the user actually typed)
+  deckHasLands: false, // whether the pasted list contains any lands
+  assumedDeck: null,   // spell-only list: { spells, lands, size } of the modeled final deck
   landTarget: null,
   threshold: null,     // null = Karsten sliding; else flat float
   previewCut: false,   // "Preview the cut": draw figures simulate the leaner build (real build untouched)
@@ -504,7 +507,16 @@ function changeSmooth(delta) {
   clearUndo();
   // Only cheap smoothers move the land target; diggers affect the sim only.
   if (_smoothPopKind === "smooth") {
-    state.landTarget = recommendLandCount(state.avgMV, state.deckSize, smoothCount());
+    if (state.assumedDeck) {
+      // Spell-only deck: the smooth count also feeds the ASSUMED deck size, so
+      // re-derive everything sized by it (deckSize, requirements, land target).
+      rebuildFromCosts();
+      refreshDashboard();
+      markFixers();
+      gradeBuild();
+    } else {
+      state.landTarget = recommendLandCount(state.avgMV, state.deckSize, smoothCount());
+    }
     updateLandPanel();
   }
   saveLocal();
@@ -626,8 +638,6 @@ function effectiveCost(card) {
 function rebuildFromCosts() {
   const cards = state.resolvedCards || [];
   const qtyByName = state.qtyByName || {};
-  state.requirements = requirementsForCards(
-    cards.map((c) => ({ cost: effectiveCost(c) })), state.deckSize, state.threshold);
 
   state.spells = [];
   state.deckCards = [];
@@ -644,8 +654,9 @@ function rebuildFromCosts() {
       const cheap = !!c.smooth && mv <= SMOOTH_MAX_MV;  // smooths early drops -> trims lands
       const dig = !!c.smooth && mv > SMOOTH_MAX_MV;     // 3 MV card advantage -> helps the top end
       // gold = needs >1 distinct color in the worst case (hard colors, plus a
-      // hybrid whose colors don't overlap the hard ones); hybrids are resolved
-      // to a concrete color at grade time against the live source counts.
+      // hybrid whose colors don't overlap the hard ones); at grade time hybrids
+      // are exact against a concrete build (either color pays, via Hall) and
+      // resolve to the best-sourced color only in the no-build fallback.
       const gold = cols.length > 1 || (cols.length >= 1 && hybrid.length > 0) || hybrid.length > 1;
       state.spells.push({ name: c.name, image: c.image, qty: qtyByName[c.name] || 1, mv, gold, pips, hybrids: hybrid, smooth: cheap, dig });
     }
@@ -681,6 +692,23 @@ function rebuildFromCosts() {
   state.digCards = drawRamp
     .filter((c) => manaValue(effectiveCost(c)) > SMOOTH_MAX_MV)
     .map((c) => ({ name: c.name, qty: qtyByName[c.name] || 0, fetch: !!c.fetch }));
+
+  // Deck size the models run at. A pasted list WITH lands is a complete deck —
+  // trust its size. A spell-only list is the nonland half of a deck this tool
+  // will finish, so model the intended final deck: spells + the land count the
+  // regression itself recommends, never below 60 (solved self-consistently in
+  // assumedDeckSize). 36 spells around a ~24-land curve models exactly 60.
+  if (state.pastedSize > 0 && !state.deckHasLands) {
+    const size = assumedDeckSize(state.pastedSize, state.avgMV, smoothCount());
+    state.deckSize = size;
+    state.assumedDeck = { spells: state.pastedSize, lands: size - state.pastedSize, size };
+  } else {
+    state.deckSize = state.pastedSize || 60;
+    state.assumedDeck = null;
+  }
+
+  state.requirements = requirementsForCards(
+    cards.map((c) => ({ cost: effectiveCost(c) })), state.deckSize, state.threshold);
 
   // Conditional fixing: turn on lands whose spell-type condition the deck meets.
   applyConditions(cards, qtyByName);
@@ -792,7 +820,8 @@ function clearDeck() {
   state.qtyByName = {};
   state.costOverrides = {}; state.smoothOverrides = {}; state.digOverrides = {};
   state.lastImportedDeck = null;
-  state.deckSize = 60;
+  state.pastedSize = 0;
+  state.deckHasLands = false;   // rebuildFromCosts resets deckSize to 60 / assumedDeck to null
   state.suggest = null;
   state.previewCut = false;
   state.suggestedLands = null;
@@ -847,7 +876,10 @@ async function analyzeDeck() {
       qtyByName[card.name] = (qtyByName[card.name] || 0) + (qtyByInput[inputName] || 0);
     }
 
-    state.deckSize = deckSize || 60;
+    // rebuildFromCosts owns state.deckSize: it trusts a pasted list with lands,
+    // and models the intended final deck for a spell-only list (see there).
+    state.pastedSize = deckSize;
+    state.deckHasLands = cards.some((c) => isLandType(c.type) && (qtyByName[c.name] || 0) > 0);
     const newDeck = text !== state.lastImportedDeck;
     // A changed deck wipes the counts/overrides below with no warning — stash the
     // build first (when there is one) so the hint can offer Undo afterwards.
@@ -899,9 +931,15 @@ async function analyzeDeck() {
     $("#suggestToggle").disabled = false;
     $("#exportBtn").disabled = false;
     // Target now lives in the dashboard (Recommended row) + the Build button, so keep the topbar lean.
-    $("#deckStatus").textContent = `${cards.length} cards · ${state.deckSize}-card deck`;
+    $("#deckStatus").textContent =
+      `${cards.length} cards · ${state.deckSize}-card deck${state.assumedDeck ? " (assumed)" : ""}`;
     const colors = COLORS.filter((c) => state.requirements[c] > 0).map((c) => COLOR_NAMES[c]);
     const parts = [colors.length ? `Needs ${colors.join(", ")} sources.` : "No colored requirements found."];
+    if (state.assumedDeck) {
+      const a = state.assumedDeck;
+      parts.unshift(`No lands in your list — modeling a ${a.size}-card deck ` +
+        `(${a.spells} spells + ~${a.lands} lands${a.size > 60 ? "; that many spells plus their lands won't fit in 60" : ""}).`);
+    }
     if (loadedLands) parts.push(`Loaded ${loadedLands} lands from your deck.`);
     const sc = smoothCount();
     if (sc) {
@@ -1003,13 +1041,34 @@ function gradeBuild() {
   _gradeTimer = setTimeout(() => { doGrade(); scheduleSim(); }, 90);
 }
 
-// A spell's colors-only castability under the given per-color source counts.
-// Resolves each two-color hybrid pip to the color with the most live sources (the
-// one you're likeliest to pay it with), then runs the conditional Karsten model.
+// The current build as category groups for the exact gold-card model: each land
+// with a positive count, carrying its EFFECTIVE colors (post-applyConditions).
+// Same iteration as tally(), so the two views always agree on the build.
+function gradeLandGroups() {
+  const groups = [];
+  for (const land of state.lands) {
+    const n = state.counts[land.name] || 0;
+    if (n) groups.push({ count: n, colors: land.colors });
+  }
+  return groups;
+}
+
+// A spell's colors-only castability. With the concrete build (landGroups), gold
+// and hybrid cards use the EXACT category model (buildCastable): a WU dual is one
+// land payable as either pip, and a hybrid pip is payable by either of its colors
+// (Hall's condition) — no disjoint-bucket splitting. Without a build, falls back
+// to the sources-only approximation: each hybrid pip resolves to the color with
+// the most live sources, then the disjoint multivariate model runs. Mono-color
+// cards take the univariate path either way (identical and fastest).
 // Shared by the live grade strip and the JSON export so they never drift.
-function spellColorProb(spell, sources, total) {
+function spellColorProb(spell, sources, total, landGroups = null) {
+  const hybrids = spell.hybrids || [];
+  const hardCols = Object.keys(spell.pips).filter((c) => spell.pips[c] > 0);
+  if (landGroups && landGroups.length && (hardCols.length > 1 || hybrids.length)) {
+    return buildCastable(spell.pips, spell.mv, hybrids, landGroups, state.deckSize, true);
+  }
   const pips = { ...spell.pips };
-  for (const pair of (spell.hybrids || [])) {
+  for (const pair of hybrids) {
     let best = pair[0];
     for (const c of pair) if ((sources[c] || 0) > (sources[best] || 0)) best = c;
     pips[best] = (pips[best] || 0) + 1;
@@ -1027,9 +1086,10 @@ function spellColorProb(spell, sources, total) {
 function doGrade() {
   const t = tally();
   const sources = { W: t.W, U: t.U, B: t.B, R: t.R, G: t.G };
+  const landGroups = gradeLandGroups();
   let worst = 1;
   for (const spell of state.spells) {
-    const prob = spellColorProb(spell, sources, t.total);
+    const prob = spellColorProb(spell, sources, t.total, landGroups);
     const cell = state.spellCells.get(spell.name);
     if (cell) {
       cell.dataset.g = grade(prob).letter;   // data-g drives the gentle color tint only
@@ -1599,8 +1659,9 @@ function buildAnalysisJSON() {
   const sd = state.spells.length
     ? simulateDeck(state.spells, currentSimLands(), state.deckSize, { trials: 5000, drawCount, fetchCount: fetches, onPlay: false, seed: BATTLE_SEED })
     : null;
+  const landGroups = gradeLandGroups();
   const cards = state.spells.map((spell) => {
-    const colorsProb = spellColorProb(spell, sources, t.total);
+    const colorsProb = spellColorProb(spell, sources, t.total, landGroups);
     return {
       name: spell.name, qty: spell.qty, mv: spell.mv,
       colorsPct: Math.round(colorsProb * 100),
@@ -1617,7 +1678,12 @@ function buildAnalysisJSON() {
   }
   return {
     schema: "mtg-manabase/1",
-    deck: { size: state.deckSize, avgMV: Number(state.avgMV.toFixed(2)), threshold: state.threshold, text: state.lastImportedDeck || $("#deckText").value.trim() },
+    deck: {
+      size: state.deckSize, avgMV: Number(state.avgMV.toFixed(2)), threshold: state.threshold,
+      // Spell-only list: `size` is the modeled final deck (spells + assumed lands), not the pasted count.
+      sizeAssumed: state.assumedDeck ? { spells: state.assumedDeck.spells, lands: state.assumedDeck.lands } : null,
+      text: state.lastImportedDeck || $("#deckText").value.trim(),
+    },
     requirements: { ...state.requirements },
     build: { lands: build, total: t.total, landTarget: state.landTarget },
     grades: {
