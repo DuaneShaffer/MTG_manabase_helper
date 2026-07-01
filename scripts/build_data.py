@@ -78,6 +78,19 @@ _BASIC_TYPES = {"Plains": "W", "Island": "U", "Swamp": "B", "Mountain": "R", "Fo
 _BAD_COST = re.compile(r"sacrifice|tap an|tap a |tap two|exile|discard|remove|\{\d+\}")
 
 
+def _added_colors(text, produced=frozenset("WUBRG")):
+    """Colors a single "Add ..." clause produces, intersected with ``produced``.
+
+    Choose-a-color / any-color wordings mean all five. Shared by the land
+    analysis and the nonland mana-producer detection.
+    """
+    low = text.lower()
+    if ("any color" in low or "any combination" in low
+            or "any one color" in low or "chosen color" in low):
+        return set("WUBRG") & set(produced)
+    return {s for s in "WUBRG" if "{" + s + "}" in text} & set(produced)
+
+
 def analyze_land_colors(card):
     """Classify a land's color output into (reliable, conditional, condition,
     type_gated, type_gate).
@@ -130,10 +143,7 @@ def analyze_land_colors(card):
         cost = line.split(":", 1)[0].lower()
         if "{t}" not in cost or _BAD_COST.search(cost):
             continue
-        if "any color" in low or "any combination" in low or "any one color" in low or "chosen color" in low:
-            colors = set("WUBRG") & produced
-        else:
-            colors = {s for s in "WUBRG" if "{" + s + "}" in line} & produced
+        colors = _added_colors(line, produced)
         if not colors:
             continue
         # "Spend this mana only to cast a creature spell" / "an instant or sorcery"
@@ -171,6 +181,73 @@ def analyze_land_colors(card):
     return (sorted(reliable), sorted(conditional - reliable), condition,
             sorted(type_gated - reliable), sorted(type_gate), needs_basic,
             sorted(unknown_gated - reliable))
+
+
+# ---------------------------------------------------------------------------
+# double-faced cards: per-face land analysis + modal-DFC classification
+# ---------------------------------------------------------------------------
+def _is_land_face(face):
+    return "Land" in (face.get("type_line", "") or "").split("—")[0]
+
+
+def _face_produced(face):
+    """Best-effort produced_mana for ONE face (Scryfall only reports it
+    card-wide, which conflates the faces): basic land types on the face's type
+    line plus whatever its own "Add" abilities name."""
+    colors = {c for t, c in _BASIC_TYPES.items() if t in (face.get("type_line") or "")}
+    for line in (face.get("oracle_text") or "").split("\n"):
+        low = line.lower()
+        if "add" not in low or ":" not in line:
+            continue
+        colors |= _added_colors(line)
+    return sorted(colors)
+
+
+def analyze_land_face(face):
+    """(colors, tapped) for a single land face of a double-faced card, run
+    through the same ability parsing as whole lands (`analyze_land_colors`)."""
+    pseudo = {
+        "name": face.get("name", ""),
+        "type_line": face.get("type_line", "") or "",
+        "oracle_text": face.get("oracle_text", "") or "",
+        "produced_mana": _face_produced(face),
+    }
+    reliable, _cond, _condition, gated, _gate, _needs_basic, _unknown = \
+        analyze_land_colors(pseudo)
+    colors = sorted(set(reliable) | set(gated))
+    tapped = _enters_tapped((face.get("oracle_text") or "").lower())
+    return colors, tapped
+
+
+def _pick_one_land_faces(card):
+    """The faces of a land//land modal DFC (the Pathway cycle), else None.
+
+    You play ONE face and are locked in — such a card is not the untapped dual
+    its joined oracle text suggests, so `slim_land` ships per-face data.
+    """
+    if card.get("layout") != "modal_dfc":
+        return None
+    faces = card.get("card_faces") or []
+    if len(faces) >= 2 and all(_is_land_face(f) for f in faces):
+        return faces
+    return None
+
+
+def _back_land_face(card):
+    """For a modal DFC whose FRONT face is a nonland spell, its land back face
+    (spell//land MDFCs, e.g. Zendikar Rising's); None otherwise. These cards
+    are spells first: they ship in cards.json with a `backLand` describing the
+    land mode, and are excluded from lands.json (the land search matches them
+    because `is_land` accepts a land on either modal face)."""
+    if card.get("layout") != "modal_dfc":
+        return None
+    faces = card.get("card_faces") or []
+    if len(faces) < 2 or _is_land_face(faces[0]):
+        return None
+    for face in faces[1:]:
+        if _is_land_face(face):
+            return face
+    return None
 
 
 def slim_land(card):
@@ -248,6 +325,23 @@ def slim_land(card):
             or re.search(r"enters tapped unless you control (?:a|an) "
                          r"(?:plains|island|swamp|mountain|forest)", low)):
         out["untapBasic"] = True
+    # Land//land modal DFC (the Pathway cycle): the joined oracle text reads
+    # like an untapped dual, but you play ONE face and are locked in. Ship the
+    # per-face breakdown (`pickOne` + `faces`) and recompute the top-level
+    # colors/tapped from the faces: colors stay the union (existing consumers
+    # keep working), tapped is False if any face can come down untapped (you
+    # would choose that face).
+    faces = _pick_one_land_faces(card)
+    if faces:
+        face_out = []
+        for face in faces:
+            colors, tapped = analyze_land_face(face)
+            face_out.append({"name": face.get("name", ""),
+                             "colors": colors, "tapped": tapped})
+        out["pickOne"] = True
+        out["faces"] = face_out
+        out["colors"] = sorted(set().union(*(set(f["colors"]) for f in face_out)))
+        out["tapped"] = all(f["tapped"] for f in face_out)
     return out
 
 
@@ -317,18 +411,89 @@ def _smooths(card):
     return False
 
 
+_PERMANENT_TYPES = ("Creature", "Artifact", "Enchantment")
+
+
+def _mana_producer(card):
+    """(colors, kind) for a nonland permanent that is a REPEATABLE colored-mana
+    source — a "{T}: Add ..." activated ability (the cost may include mana on
+    top of the tap, e.g. Signets' "{1}, {T}: Add {W}{U}"). Karsten credits such
+    dorks/rocks as fractional sources, so the app needs them flagged.
+
+    Excluded: one-shot effects (rituals — no {T} in the cost; sacrifice costs),
+    colorless-only producers, granted abilities (quoted text belongs to other
+    permanents), and lands (handled by `slim_land`). Multiface cards are judged
+    by their FRONT face — a back face's ability isn't available from hand.
+    Returns (None, None) when the card doesn't qualify.
+    """
+    face = (card.get("card_faces") or [card])[0]
+    type_line = face.get("type_line") or card.get("type_line") or ""
+    main_types = type_line.split("—")[0]
+    if "Land" in main_types or not any(t in main_types for t in _PERMANENT_TYPES):
+        return None, None
+    oracle = face.get("oracle_text") or ""
+    colors = set()
+    for line in oracle.split("\n"):
+        # An "Add" inside reminder text or a quoted ability belongs to something
+        # else — Treasure-token reminder text ('... artifacts with "{T},
+        # Sacrifice this artifact: Add one mana of any color."') and abilities
+        # granted to other permanents must not flag this card as a producer.
+        line = re.sub(r"\([^)]*\)", "", line)
+        line = re.sub(r'"[^"]*"', "", line)
+        low = line.lower()
+        if "add" not in low or ":" not in line:
+            continue
+        # Restricted-use mana ("Spend this mana only to cast an artifact
+        # spell") isn't general fixing — the land parser files these under
+        # condColors, so the producer flag stays conservative and skips them.
+        if "spend this mana only" in low:
+            continue
+        cost, effect = line.split(":", 1)
+        cost = cost.lower()
+        if "{t}" not in cost:                    # ritual / non-tap engine: one-shot
+            continue
+        if "sacrifice" in cost:                  # Lotus Petal-style: one-shot
+            continue
+        colors |= _added_colors(effect)          # colorless-only adds stay empty
+    if not colors:
+        return None, None
+    return sorted(colors), ("dork" if "Creature" in main_types else "rock")
+
+
 def slim_card(card):
-    cost = card.get("mana_cost") or ""
+    # A spell//land modal DFC is a SPELL first (the front face); the joined
+    # type/oracle text must not pollute its cost, smooth/fetch flags, or image.
+    # Its land mode ships as `backLand` below.
+    back = _back_land_face(card)
+    grade = card
+    if back is not None:
+        front = card["card_faces"][0]
+        grade = {
+            "name": card["name"],
+            "cmc": card.get("cmc", 0),
+            "mana_cost": front.get("mana_cost", "") or "",
+            "type_line": front.get("type_line", "") or "",
+            "oracle_text": front.get("oracle_text", "") or "",
+        }
+    cost = grade.get("mana_cost") or ""
     if not cost and card.get("card_faces"):
         cost = card["card_faces"][0].get("mana_cost", "") or ""
-    return {
+    out = {
         "name": card["name"],
         "cost": cost,
         "type": card.get("type_line", ""),
         "image": _uris(card).get("small"),
-        "smooth": _smooths(card),
-        "fetch": _fetches_land(card),
+        "smooth": _smooths(grade),
+        "fetch": _fetches_land(grade),
     }
+    if back is not None:
+        colors, tapped = analyze_land_face(back)
+        out["backLand"] = {"colors": colors, "tapped": tapped}
+    mana_colors, mana_kind = _mana_producer(card)
+    if mana_colors:
+        out["manaColors"] = mana_colors
+        out["manaKind"] = mana_kind
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -362,11 +527,29 @@ def validate_data(lands, cards):
             problems.append("land {!r} missing keys: {}".format(
                 land.get("name", "<unnamed>"), ", ".join(missing)))
             break  # one representative failure is enough
+        # A pick-one land (land//land MDFC) must ship a usable face breakdown.
+        if land.get("pickOne"):
+            faces = land.get("faces") or []
+            if len(faces) < 2 or any("colors" not in f or "tapped" not in f
+                                     for f in faces):
+                problems.append("pickOne land {!r} has a malformed `faces` "
+                                "list".format(land.get("name", "<unnamed>")))
+                break
     for card in cards.values():
         missing = [k for k in CARD_KEYS if k not in card]
         if missing:
             problems.append("card {!r} missing keys: {}".format(
                 card.get("name", "<unnamed>"), ", ".join(missing)))
+            break
+        back = card.get("backLand")
+        if back is not None and ("colors" not in back or "tapped" not in back):
+            problems.append("card {!r} has a malformed `backLand`".format(
+                card.get("name", "<unnamed>")))
+            break
+        if ("manaKind" in card) != ("manaColors" in card) or \
+                card.get("manaKind") not in (None, "dork", "rock"):
+            problems.append("card {!r} has inconsistent manaColors/manaKind"
+                            .format(card.get("name", "<unnamed>")))
             break
 
     if lands:
@@ -406,7 +589,12 @@ def write_outputs(lands, cards, meta):
 
 def main():
     raw_lands = scryfall.standard_lands(force_refresh=True)
-    lands = [slim_land(c) for c in land_mod.unique_lands(raw_lands)]
+    # Spell//land modal DFCs match the land search (a land on either modal face
+    # counts for `is_land`), but they are spells first — they ship in cards.json
+    # with a `backLand` field instead, so drop them here rather than
+    # double-counting them as standalone lands.
+    lands = [slim_land(c) for c in land_mod.unique_lands(raw_lands)
+             if _back_land_face(c) is None]
 
     all_cards = scryfall._search_all("legal:standard " + scryfall.legality_cutoff(), unique="cards")
     cards = {c["name"].lower(): slim_card(c) for c in all_cards}

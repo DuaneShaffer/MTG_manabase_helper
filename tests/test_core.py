@@ -306,6 +306,232 @@ def test_fetch_flag_distinguishes_land_search_from_cantrips():
 
 
 # --------------------------------------------------------------------------
+# modal double-faced cards: pathways (land//land) and spell//land MDFCs
+# --------------------------------------------------------------------------
+def _pathway():
+    """A Branchloft Pathway-shaped modal DFC: both faces are lands, root
+    mana_cost/oracle_text absent (everything lives on the faces), and Scryfall's
+    card-wide produced_mana conflates the two faces."""
+    return {
+        "name": "Branchloft Pathway // Boulderloft Pathway",
+        "layout": "modal_dfc", "type_line": "Land // Land",
+        "produced_mana": ["G", "W"], "rarity": "rare",
+        "card_faces": [
+            {"name": "Branchloft Pathway", "type_line": "Land",
+             "mana_cost": "", "oracle_text": "{T}: Add {G}.",
+             "image_uris": {"small": "s1", "normal": "n1"}},
+            {"name": "Boulderloft Pathway", "type_line": "Land",
+             "mana_cost": "", "oracle_text": "{T}: Add {W}.",
+             "image_uris": {"small": "s2", "normal": "n2"}},
+        ],
+    }
+
+
+def _spell_land_mdfc():
+    """A Bala Ged Recovery-shaped modal DFC: nonland spell front, land back."""
+    return {
+        "name": "Bala Ged Recovery // Bala Ged Sanctuary",
+        "layout": "modal_dfc", "type_line": "Sorcery // Land",
+        "cmc": 3, "produced_mana": ["G"], "rarity": "uncommon",
+        "card_faces": [
+            {"name": "Bala Ged Recovery", "type_line": "Sorcery",
+             "mana_cost": "{2}{G}",
+             "oracle_text": "Return target card from your graveyard to your hand.",
+             "image_uris": {"small": "front-small", "normal": "front-normal"}},
+            {"name": "Bala Ged Sanctuary", "type_line": "Land",
+             "mana_cost": "",
+             "oracle_text": "This land enters tapped.\n{T}: Add {G}.",
+             "image_uris": {"small": "back-small", "normal": "back-normal"}},
+        ],
+    }
+
+
+def test_pathway_land_land_mdfc_is_pick_one_with_faces():
+    """A land//land modal DFC (Pathway) is NOT a free dual — you play one face
+    and are locked in. It ships pickOne + a per-face color/tapped breakdown,
+    while the top-level colors stay the union so existing consumers work."""
+    out = build_data.slim_land(_pathway())
+    assert out["pickOne"] is True
+    assert out["faces"] == [
+        {"name": "Branchloft Pathway", "colors": ["G"], "tapped": False},
+        {"name": "Boulderloft Pathway", "colors": ["W"], "tapped": False},
+    ]
+    assert out["colors"] == ["G", "W"]      # union, for existing consumers
+    assert out["tapped"] is False           # every face can come down untapped
+
+    # A pathway with one tapped face is still untapped at top level (you would
+    # pick the untapped face), but the per-face data tells the truth.
+    slow = _pathway()
+    slow["card_faces"][1]["oracle_text"] = "This land enters tapped.\n{T}: Add {W}."
+    s = build_data.slim_land(slow)
+    assert s["tapped"] is False
+    assert s["faces"][1]["tapped"] is True
+
+    # An ordinary single-faced dual gets no pickOne/faces fields.
+    dual = build_data.slim_land(_land("Plain Dual", ["G", "W"],
+                                      oracle_text="{T}: Add {G} or {W}."))
+    assert "pickOne" not in dual and "faces" not in dual
+
+
+def test_pathway_faces_analyzed_with_land_rules():
+    """Per-face analysis reuses the land parsing: a basic-typed face credits its
+    type's color, and an any-color face credits all five."""
+    card = _pathway()
+    card["card_faces"][0].update(type_line="Land — Forest", oracle_text="")
+    card["card_faces"][1].update(
+        oracle_text="{T}: Add one mana of any color.")
+    card["produced_mana"] = ["B", "G", "R", "U", "W"]
+    out = build_data.slim_land(card)
+    assert out["faces"][0]["colors"] == ["G"]
+    assert out["faces"][1]["colors"] == ["B", "G", "R", "U", "W"]
+
+
+def test_spell_land_mdfc_is_a_spell_with_backland():
+    """A spell//land modal DFC ships in cards.json as its FRONT-face spell —
+    front cost and image, smooth/fetch judged on the front face only — plus a
+    `backLand` describing the land mode (colors via per-face analysis)."""
+    out = build_data.slim_card(_spell_land_mdfc())
+    assert out["cost"] == "{2}{G}"                 # front face, not joined
+    assert out["image"] == "front-small"           # front face image
+    assert out["backLand"] == {"colors": ["G"], "tapped": True}
+    assert out["smooth"] is False and out["fetch"] is False
+
+    # The land face's text must not make the card look like a smoother: even a
+    # scry rider on the LAND face is unavailable when cast as the spell.
+    scry_back = _spell_land_mdfc()
+    scry_back["card_faces"][1]["oracle_text"] = (
+        "This land enters tapped.\nWhen this land enters, scry 1.\n{T}: Add {G}.")
+    assert build_data.slim_card(scry_back)["smooth"] is False
+
+    # ...while a draw spell on the FRONT face still counts as smoothing.
+    cantrip_front = _spell_land_mdfc()
+    cantrip_front["card_faces"][0]["oracle_text"] = "Draw two cards."
+    assert build_data.slim_card(cantrip_front)["smooth"] is True
+
+
+def test_spell_land_mdfc_is_excluded_from_the_land_pool():
+    """`is_land` accepts a land on either modal face, so the land search
+    matches spell//land MDFCs — but they ship as cards (with backLand), and
+    `_back_land_face` is the gate main() uses to keep them out of lands.json.
+    A pathway (land front) and an adventure-town land must stay lands."""
+    assert build_data._back_land_face(_spell_land_mdfc()) is not None
+    assert build_data._back_land_face(_pathway()) is None
+    town = {"name": "Ishgard, the Holy See // Faith & Grief", "layout": "adventure",
+            "type_line": "Land — Town // Sorcery — Adventure",
+            "card_faces": [
+                {"name": "Ishgard, the Holy See", "type_line": "Land — Town",
+                 "oracle_text": "This land enters tapped.\n{T}: Add {W}."},
+                {"name": "Faith & Grief", "type_line": "Sorcery — Adventure",
+                 "mana_cost": "{3}{W}{W}", "oracle_text": ""}]}
+    assert build_data._back_land_face(town) is None
+    # A transform card with a back-face land is not a modal DFC at all.
+    god = {"name": "God // Temple", "layout": "transform",
+           "type_line": "Legendary Creature — God // Land",
+           "card_faces": [{"name": "God", "type_line": "Legendary Creature — God"},
+                          {"name": "Temple", "type_line": "Land"}]}
+    assert build_data._back_land_face(god) is None
+
+
+# --------------------------------------------------------------------------
+# nonland mana producers (dorks / rocks)
+# --------------------------------------------------------------------------
+def test_mana_producer_flags_dorks_and_rocks():
+    """A nonland permanent with a repeatable '{T}: Add <colored>' ability is a
+    fractional mana source: creatures flag as dorks, artifacts/enchantments as
+    rocks, and the activation cost may include mana on top of the tap."""
+    elves = build_data.slim_card({
+        "name": "Llanowar Elves", "mana_cost": "{G}",
+        "type_line": "Creature — Elf Druid", "cmc": 1, "produced_mana": ["G"],
+        "oracle_text": "{T}: Add {G}."})
+    assert elves["manaColors"] == ["G"] and elves["manaKind"] == "dork"
+    assert elves["smooth"] is True          # still a smoother — flags coexist
+
+    signet = build_data.slim_card({
+        "name": "Azorius Signet", "mana_cost": "{2}", "type_line": "Artifact",
+        "cmc": 2, "produced_mana": ["U", "W"],
+        "oracle_text": "{1}, {T}: Add {W}{U}."})
+    assert signet["manaColors"] == ["U", "W"] and signet["manaKind"] == "rock"
+
+    shrine = build_data.slim_card({
+        "name": "Mana Shrine", "mana_cost": "{2}", "type_line": "Enchantment",
+        "cmc": 2, "produced_mana": ["B", "G", "R", "U", "W"],
+        "oracle_text": "{T}: Add one mana of any color."})
+    assert shrine["manaColors"] == ["B", "G", "R", "U", "W"]
+    assert shrine["manaKind"] == "rock"     # noncreature permanent -> rock
+
+    # Colored mana in the COST must not leak into the produced colors.
+    filt = build_data._mana_producer({
+        "name": "Filter", "type_line": "Creature — Shaman",
+        "oracle_text": "{G}, {T}: Add {W}{W}."})
+    assert filt == (["W"], "dork")
+
+
+def test_mana_producer_excludes_one_shots_colorless_and_lands():
+    p = build_data._mana_producer
+    # Ritual: no {T} ability — a one-shot, not a source.
+    assert p({"name": "Ritual", "type_line": "Sorcery",
+              "oracle_text": "Add {R}{R}{R}."}) == (None, None)
+    # Sacrifice cost: one-shot even with a tap (Lotus Petal-style).
+    assert p({"name": "Petal", "type_line": "Artifact",
+              "oracle_text": "{T}, Sacrifice this artifact: Add one mana of any color."}) == (None, None)
+    # Colorless-only producer.
+    assert p({"name": "Mind Stone", "type_line": "Artifact",
+              "oracle_text": "{T}: Add {C}.\n{1}, {T}, Sacrifice this artifact: Draw a card."}) == (None, None)
+    # Lands are handled on the land side, never flagged here.
+    assert p({"name": "Forest", "type_line": "Basic Land — Forest",
+              "oracle_text": "{T}: Add {G}."}) == (None, None)
+    # Granted abilities (quoted) belong to other permanents.
+    assert p({"name": "Rite", "type_line": "Enchantment", "oracle_text":
+              'Creatures you control have "{T}: Add one mana of any color."'}) == (None, None)
+    # Treasure-makers: the "Add" is in the token's reminder text, and each
+    # Treasure is itself one-shot — not a repeatable source.
+    assert p({"name": "Vault", "type_line": "Artifact", "oracle_text":
+              ('{2}, {T}: Draw a card, then discard a card. Create a Treasure '
+               'token. (It\'s an artifact with "{T}, Sacrifice this artifact: '
+               'Add one mana of any color.")')}) == (None, None)
+    # Restricted-use mana ("spend this mana only ...") is not general fixing.
+    assert p({"name": "Foundry", "type_line": "Artifact", "oracle_text":
+              "{T}: Add {W}. Spend this mana only to cast an artifact spell."}) == (None, None)
+    # Nonpermanents with weird Add wordings don't qualify either.
+    assert p({"name": "Combat trick", "type_line": "Instant",
+              "oracle_text": "Untap target creature. Add {G}."}) == (None, None)
+    # No flag fields ship on a non-producer.
+    out = build_data.slim_card({"name": "Bear", "mana_cost": "{1}{G}",
+                                "type_line": "Creature — Bear", "cmc": 2,
+                                "oracle_text": ""})
+    assert "manaColors" not in out and "manaKind" not in out
+
+
+def test_validate_data_checks_new_optional_fields():
+    lands_out, cards_out = _plausible_snapshot()
+    lands_out[0]["pickOne"] = True
+    lands_out[0]["faces"] = [{"name": "A", "colors": ["W"]}]  # missing tapped + 1 face
+    with pytest.raises(SystemExit, match="pickOne"):
+        build_data.validate_data(lands_out, cards_out)
+
+    lands_out, cards_out = _plausible_snapshot()
+    next(iter(cards_out.values()))["backLand"] = {"colors": ["G"]}  # no tapped
+    with pytest.raises(SystemExit, match="backLand"):
+        build_data.validate_data(lands_out, cards_out)
+
+    lands_out, cards_out = _plausible_snapshot()
+    next(iter(cards_out.values()))["manaKind"] = "dork"  # manaColors missing
+    with pytest.raises(SystemExit, match="manaColors/manaKind"):
+        build_data.validate_data(lands_out, cards_out)
+
+    # Well-formed flags pass.
+    lands_out, cards_out = _plausible_snapshot()
+    lands_out[0]["pickOne"] = True
+    lands_out[0]["faces"] = [{"name": "A", "colors": ["W"], "tapped": False},
+                             {"name": "B", "colors": ["G"], "tapped": True}]
+    first = next(iter(cards_out.values()))
+    first["backLand"] = {"colors": ["G"], "tapped": True}
+    first["manaColors"] = ["G"]
+    first["manaKind"] = "dork"
+    build_data.validate_data(lands_out, cards_out)  # must not raise
+
+
+# --------------------------------------------------------------------------
 # build-data output validation (the floors that gate the weekly commit)
 # --------------------------------------------------------------------------
 def _plausible_snapshot(n_lands=250, n_cards=3500):
