@@ -94,3 +94,68 @@ export function requirementsForCosts(costs, deckSize = DEFAULT_DECK_SIZE, thresh
     threshold,
   );
 }
+
+// Karsten's fractional source weights for repeatable nonland mana producers:
+// a mana dork is worth about half a land source (it dies to removal and needs
+// to survive a turn), a mana rock about three quarters.
+const PRODUCER_WEIGHT = { dork: 0.5, rock: 0.75 };
+
+/**
+ * Fractional colored-source credit from nonland mana producers (dorks/rocks).
+ *
+ * Karsten's counting: each dork copy is ~0.5 of a source, each rock ~0.75, of
+ * EVERY color it produces (a Signet is a source of both its colors). Nothing
+ * is capped here — the consumer decides applicability (see creditForSpell for
+ * the "producer must hit the table a turn earlier" gate).
+ *
+ * This lives entirely on the "have" side: it does NOT change how
+ * requirementsForCards computes needed sources.
+ *
+ * @param {Array<{name:string, manaColors?:string[], manaKind?:string, mv?:number, cost?:string, mana_cost?:string}>} cards
+ *   Resolved card records; only those with a recognized `manaKind`
+ *   ("dork"|"rock") and nonempty `manaColors` contribute.
+ * @param {?Object.<string,number>} qtyByName  name -> copies. If omitted,
+ *   every card counts as one copy; if given, cards absent from it count 0.
+ * @returns {{byColor: {W:number,U:number,B:number,R:number,G:number},
+ *            producers: Array<{name:string, qty:number, colors:string[], kind:string, mv:number, weight:number}>}}
+ */
+export function nonlandSourceCredit(cards, qtyByName = null) {
+  const byColor = {};
+  for (const c of COLORS) byColor[c] = 0;
+  const producers = [];
+  for (const card of cards || []) {
+    const kind = card.manaKind;
+    const weight = PRODUCER_WEIGHT[kind];
+    const colors = (card.manaColors || []).filter((c) => COLORS.includes(c));
+    if (!weight || colors.length === 0) continue;
+    const qty = qtyByName ? qtyByName[card.name] || 0 : 1;
+    if (qty <= 0) continue;
+    const mv =
+      card.mv != null ? card.mv : manaValue(card.cost != null ? card.cost : card.mana_cost || "");
+    producers.push({ name: card.name, qty, colors, kind, mv, weight });
+    for (const c of colors) byColor[c] += weight * qty;
+  }
+  return { byColor, producers };
+}
+
+/**
+ * The slice of a nonlandSourceCredit() result that applies to a spell cast on
+ * `spellTurn`: only producers with mv < spellTurn count, because the producer
+ * must hit the table a turn earlier to make mana for the spell (a turn-1 dork
+ * credits turn-2+ spells; a 3-mv rock credits turn-4+ spells).
+ *
+ * @param {{producers: Array<{colors:string[], mv:number, weight:number, qty:number}>}} credit
+ *   The object returned by nonlandSourceCredit().
+ * @param {number} spellTurn  The turn the spell is cast on (its mv, on curve).
+ * @returns {{W:number,U:number,B:number,R:number,G:number}}
+ */
+export function creditForSpell(credit, spellTurn) {
+  const byColor = {};
+  for (const c of COLORS) byColor[c] = 0;
+  for (const p of (credit && credit.producers) || []) {
+    if (p.mv < spellTurn) {
+      for (const c of p.colors) byColor[c] += p.weight * p.qty;
+    }
+  }
+  return byColor;
+}

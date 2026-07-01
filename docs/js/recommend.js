@@ -24,6 +24,19 @@ export function recommendLandCount(avgMV, deckSize = 60, smoothCount = 0) {
   return Math.min(hi, Math.max(lo, Math.round(base)));
 }
 
+// Reduce per-color source requirements by a fractional nonland-producer credit
+// (see requirements.js nonlandSourceCredit): subtract the credit, then take the
+// ceiling of the remainder, floored at 0. So two dorks (0.5 each) shave one
+// land source off a color's minimum, but a single dork (13 - 0.5 = 12.5 -> 13)
+// shaves nothing. Usable directly for the ILP's per-color minimums too.
+export function creditAdjustedRequirements(requirements, credit) {
+  const out = {};
+  for (const c of COLORS) {
+    out[c] = Math.max(0, Math.ceil((requirements[c] || 0) - ((credit && credit[c]) || 0)));
+  }
+  return out;
+}
+
 // The colors a land view object produces, intersected with WUBRG order.
 function landColors(land) {
   const produced = land.colors || [];
@@ -42,21 +55,25 @@ function keyGreater(a, b) {
 //
 // requirements: object over WUBRG of needed sources.
 // lands: array of land view objects ({name, colors:[...], basic, tapped, ...}).
-// opts: { landTarget=null, maxLands=null, taplandCap=9 }
+// opts: { landTarget=null, maxLands=null, taplandCap=9, credit=null }
+//   credit: optional fractional byColor map from nonlandSourceCredit() —
+//   dorks/rocks already supply part of each color, so the LAND minimums drop
+//   via creditAdjustedRequirements. Behavior is unchanged when absent.
 //
 // Returns { counts, cards, sources, met, total, shortfall, taplands }.
 export function recommend(requirements, lands, opts = {}) {
   const landTarget = opts.landTarget ?? null;
   const maxLands = opts.maxLands ?? null;
   const taplandCap = opts.taplandCap ?? 9;
+  const req = opts.credit ? creditAdjustedRequirements(requirements, opts.credit) : requirements;
 
   const remaining = {};
   const sources = {};
   for (const c of COLORS) {
-    remaining[c] = requirements[c] || 0;
+    remaining[c] = req[c] || 0;
     sources[c] = 0;
   }
-  const needed = new Set(COLORS.filter((c) => (requirements[c] || 0) > 0));
+  const needed = new Set(COLORS.filter((c) => (req[c] || 0) > 0));
 
   const counts = {};
   const chosen = {};
@@ -158,8 +175,7 @@ export function recommend(requirements, lands, opts = {}) {
       const candidates = COLORS.filter((c) => basicFor[c]);
       if (candidates.length === 0) break;
       candidates.sort(
-        (a, b) =>
-          sources[a] - (requirements[a] || 0) - (sources[b] - (requirements[b] || 0)),
+        (a, b) => sources[a] - (req[a] || 0) - (sources[b] - (req[b] || 0)),
       );
       const c = candidates[0];
       const cand = basicFor[c];
@@ -171,7 +187,7 @@ export function recommend(requirements, lands, opts = {}) {
   }
 
   const met = {};
-  for (const c of COLORS) met[c] = sources[c] >= (requirements[c] || 0);
+  for (const c of COLORS) met[c] = sources[c] >= (req[c] || 0);
 
   const shortfall = {};
   for (const c of COLORS) if (remaining[c] > 0) shortfall[c] = remaining[c];

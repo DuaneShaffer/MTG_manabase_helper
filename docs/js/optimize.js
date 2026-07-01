@@ -83,6 +83,37 @@ const UTIL_POP_MIN = 0.1;   // ~appeared in 3+ of the sampled winning decks
 const UTIL_REWARD = 5;      // reward scale (× popularity); only needs to beat a redundant basic/dual in an excess slot
 const MAX_UTILITY = 3;      // most utility lands any one build will run
 
+// --- MIP solve controls -----------------------------------------------------
+// On wide (4–5 color) pools the model is highly SYMMETRIC: many interchangeable
+// dual/rainbow groups carry equal objective coefficients, so the LP relaxation
+// sits on a plateau of equivalent optima and branch-and-cut burns seconds (46s+
+// measured on a 4/5C control deck at 27 lands) *proving* optimality of an
+// incumbent it found in the first few nodes. The fix is a relative MIP gap
+// (`tolerance`, honored by the vendored jsLPSolver's branchAndCut): accept the
+// incumbent once it's within GAP of the root LP bound. The bound is tight on
+// these models (measured gap < 0.1 objective units), so 0.002 returns the exact
+// same builds as the full proof — in a few hundred ms instead of tens of seconds.
+//
+// jsLPSolver's gap test is `incumbent < bound × (1 + GAP)` (minimization), which
+// can never fire when the objective value is NEGATIVE — and the untapped
+// objective is all rewards (negative costs). So when the land count is pinned
+// (`total = landTarget`), buildLandModel shifts every land's cost by +COST_SHIFT,
+// a constant per land and therefore a constant COST_SHIFT × landTarget per
+// feasible build: the ranking is untouched but the objective turns positive and
+// the gap test works. COST_SHIFT = 5 clears the largest per-land reward (5 needed
+// colors, or UTIL_REWARD × popularity ≤ 5; a land's own reward plus its gated
+// credits can't exceed its 5 colors either), so the shifted objective is ≥ 0.
+//
+// `timeout` (ms, also honored by branchAndCut) is a pure backstop for inputs the
+// gap doesn't tame: on timeout the solver returns its best INCUMBENT (measured:
+// identical to the true optimum on the pathological deck), so the user gets a
+// valid near-optimal build instead of a frozen tab. Callers still see the normal
+// return shape; only a timeout with no incumbent at all degrades further (the
+// summarized result then reads infeasible/short and app.js falls back to greedy).
+const MIP_GAP = 0.002;
+const SOLVE_TIMEOUT_MS = 1000;
+const COST_SHIFT = 5;
+
 // Lazy-load the vendored solver. In the browser it injects a classic <script>
 // that sets window.solver; in Node a test can pre-set globalThis.solver and this
 // returns it without touching the DOM.
@@ -350,7 +381,20 @@ export function buildLandModel({ requirements, lands, landTarget, objective = "u
     }
   });
 
-  return { optimize: "cost", opType: "min", constraints, variables, ints, _pool: pool };
+  // Positive-shift the land costs when the land count is pinned (see the MIP
+  // solve controls block): + COST_SHIFT per land is + COST_SHIFT × landTarget on
+  // every feasible build, so the argmin is unchanged but the objective becomes
+  // positive and the solver's relative-gap early exit (MIP_GAP) can fire. Not
+  // applied for the "lands" objective (total is a cap there, not an equality, so
+  // the shift would distort the count tradeoff) — its costs are positive already.
+  if (pinTotal && landTarget) {
+    for (const cand of pool) variables[cand.name].cost = (variables[cand.name].cost || 0) + COST_SHIFT;
+  }
+
+  return {
+    optimize: "cost", opType: "min", constraints, variables, ints, _pool: pool,
+    options: { tolerance: MIP_GAP, timeout: SOLVE_TIMEOUT_MS },
+  };
 }
 
 // Turn a solver solution into the same shape recommend() returns, so the UI can

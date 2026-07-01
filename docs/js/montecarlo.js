@@ -17,8 +17,20 @@
 // Other simplifications: London mulligan keeping 2–5 lands (≤3 mulls); one land
 // drop per turn; a hand of only tapped lands can't cast on curve; fetched lands
 // enter tapped; scry-to-bottom policies aren't modelled.
+//
+// Modal double-faced cards:
+//   * pickOne lands (land//land, e.g. Pathways) commit to exactly ONE face at
+//     play time — per trial, each copy is resolved in draw order to the face
+//     whose color is scarcest against the DECK's aggregate colored demand
+//     (mirroring the fetch-token heuristic), and stays locked for every spell
+//     check that game. Drawn copies choose independently.
+//   * backLand spells (spell//land, via opts.backLands) may be played as lands:
+//     a copy flips only when the cast being checked would otherwise miss a land
+//     drop it needs; flipped copies use the back face's colors/tapped.
 
-const isLand = (c) => c !== null && typeof c === "object";
+// A back-face-land spell token ({back:true}) is a SPELL until flipped, so it
+// doesn't count as a land for mulligans or land drops.
+const isLand = (c) => c !== null && typeof c === "object" && !c.back;
 
 // Seeded PRNG (mulberry32) — lets the caller put every candidate build on the same
 // per-trial draws (common random numbers) for low-variance comparisons.
@@ -40,19 +52,58 @@ function shuffle(a, rng) {
   return a;
 }
 
-// Deck template: a {colors, tapped, basic, needsBasic} token per land copy,
-// "fetch" per land-fetch/ramp spell (resolves to a chosen color), "draw" per other
-// dig spell, null for inert filler.
-function buildDeck(buildLands, deckSize, drawCount, fetchCount) {
+// Deck template: a {colors, tapped, basic, needsBasic} token per land copy
+// (plus {pickOne, faces} for choose-a-face modal lands), a {back:true} spell
+// token per backLand copy, "fetch" per land-fetch/ramp spell (resolves to a
+// chosen color), "draw" per other dig spell, null for inert filler.
+function buildDeck(buildLands, deckSize, drawCount, fetchCount, backLands) {
   const deck = [];
   for (const l of buildLands) {
-    for (let i = 0; i < l.count; i++) deck.push({ colors: l.colors, tapped: !!l.tapped, basic: !!l.basic, needsBasic: !!l.needsBasic, slow: !!l.slow, untapBasic: !!l.untapBasic });
+    for (let i = 0; i < l.count; i++) deck.push({ colors: l.colors, tapped: !!l.tapped, basic: !!l.basic, needsBasic: !!l.needsBasic, slow: !!l.slow, untapBasic: !!l.untapBasic, pickOne: !!l.pickOne, faces: l.faces });
+  }
+  for (const b of backLands || []) {
+    for (let i = 0; i < (b.count || 0); i++) deck.push({ back: true, colors: b.colors || [], tapped: !!b.tapped });
   }
   const fetches = Math.max(0, Math.min(fetchCount || 0, drawCount));
   for (let i = 0; i < fetches; i++) deck.push("fetch");
   for (let i = 0; i < drawCount - fetches; i++) deck.push("draw");
   for (let i = deck.length; i < deckSize; i++) deck.push(null);
   return deck;
+}
+
+// Commit every pickOne land in this trial's draw order to ONE face: the face
+// covering the color with the biggest outstanding deficit (deck-wide colored
+// demand minus colors of the lands committed before it — the same scarcest-
+// color idea the fetch tokens use); ties prefer an untapped face. The token is
+// REPLACED with a plain land token for that face, so every spell check in the
+// game sees the locked-in face — that's the Pathway cost the sim must expose:
+// unlike a true dual, a committed copy pays only one of its colors.
+function commitPickOnes(hand, library, demand) {
+  const have = {};
+  const commit = (arr) => {
+    for (let i = 0; i < arr.length; i++) {
+      const c = arr[i];
+      if (!isLand(c)) continue;
+      if (c.pickOne && c.faces && c.faces.length) {
+        let best = null, bestDef = -Infinity, bestUntap = -1;
+        for (const face of c.faces) {
+          let def = -Infinity;
+          for (const col of face.colors || []) {
+            const d = (demand[col] || 0) - (have[col] || 0);
+            if (d > def) def = d;
+          }
+          const untap = face.tapped ? 0 : 1;
+          if (def > bestDef || (def === bestDef && untap > bestUntap)) {
+            best = face; bestDef = def; bestUntap = untap;
+          }
+        }
+        arr[i] = { colors: best.colors || [], tapped: !!best.tapped, basic: !!c.basic, needsBasic: !!c.needsBasic, slow: !!c.slow, untapBasic: !!c.untapBasic };
+      }
+      for (const col of arr[i].colors) have[col] = (have[col] || 0) + 1;
+    }
+  };
+  commit(hand);
+  commit(library);
 }
 
 // London mulligan: returns the kept hand + remaining library (in draw order),
@@ -154,7 +205,11 @@ const DELAY_CAP = 6;
 
 /**
  * Simulate the whole deck once per trial and grade every spell from the same draws.
- * opts: { trials, onPlay, rng, drawCount, fetchCount }
+ * opts: { trials, onPlay, rng, seed, drawCount, fetchCount, backLands }
+ *   backLands: [{colors, tapped, count}] — spell//land MDFC copies in the deck
+ *   (spells that may be played as their back-face land instead of cast).
+ * buildLands entries may carry { pickOne: true, faces: [{colors, tapped}] } —
+ * modal land//land DFCs that commit to one face at play time (see commitPickOnes).
  * @returns {{bySpell, overall, trials, keepRates, mulliganRate, delayBySpell}}
  *   keepRates: {7,6,5,4} fraction of games kept at each hand size;
  *   mulliganRate: fraction of games that took >=1 mulligan;
@@ -172,7 +227,18 @@ export function simulateDeck(spells, buildLands, deckSize, opts = {}) {
   // and would otherwise desync a single shared stream after the first divergent
   // trial). Default: unseeded Math.random.
   const sharedRng = opts.rng || (opts.seed == null ? Math.random : null);
-  const template = buildDeck(buildLands, deckSize, drawCount, fetchCount);
+  const template = buildDeck(buildLands, deckSize, drawCount, fetchCount, opts.backLands);
+  const hasPickOne = buildLands.some((l) => l.pickOne && l.faces && l.faces.length);
+  // Deck-wide colored demand (qty-weighted pips; a hybrid pip leans half on each
+  // of its two colors) — the "outstanding needs" pickOne faces are chosen against.
+  const demand = {};
+  if (hasPickOne) {
+    for (const s of spells) {
+      const q = s.qty || 1;
+      for (const c in s.pips) demand[c] = (demand[c] || 0) + s.pips[c] * q;
+      for (const pair of s.hybrids || []) for (const c of pair) demand[c] = (demand[c] || 0) + 0.5 * q;
+    }
+  }
   const success = {};
   const delaySum = {};
   for (const s of spells) { success[s.name] = 0; delaySum[s.name] = 0; }
@@ -182,6 +248,7 @@ export function simulateDeck(spells, buildLands, deckSize, opts = {}) {
   for (let t = 0; t < trials; t++) {
     const rng = sharedRng || mulberry32((opts.seed ^ Math.imul(t + 1, 0x9e3779b9)) >>> 0);
     const { hand, library, kept, mulls } = drawGame(template.slice(), rng);
+    if (hasPickOne) commitPickOnes(hand, library, demand);
     keep[kept] = (keep[kept] || 0) + 1;
     if (mulls > 0) mulliganed++;
     for (const s of spells) {
@@ -192,12 +259,13 @@ export function simulateDeck(spells, buildLands, deckSize, opts = {}) {
       for (let extra = 0; extra <= DELAY_CAP; extra++) {
         const draws = baseDraws + extra;
         const lands = [];
+        const backs = [];
         let digs = 0, fetches = 0;
-        for (const c of hand) { if (isLand(c)) lands.push(c); else if (c === "draw") digs++; else if (c === "fetch") fetches++; }
+        for (const c of hand) { if (isLand(c)) lands.push(c); else if (c === "draw") digs++; else if (c === "fetch") fetches++; else if (c !== null && c.back) backs.push(c); }
         const lim = Math.min(draws, library.length);
         for (let i = 0; i < lim; i++) {
           const c = library[i];
-          if (isLand(c)) lands.push(c); else if (c === "draw") digs++; else if (c === "fetch") fetches++;
+          if (isLand(c)) lands.push(c); else if (c === "draw") digs++; else if (c === "fetch") fetches++; else if (c !== null && c.back) backs.push(c);
         }
         // Each dig spell seen lets you look one card deeper for a land.
         for (let j = draws; j < draws + digs && j < library.length; j++) {
@@ -205,6 +273,15 @@ export function simulateDeck(spells, buildLands, deckSize, opts = {}) {
         }
         // Each fetch/ramp spell pulls a land of the color you most need.
         resolveFetches(lands, fetches, s.pips, s.hybrids);
+        // backLand policy: a spell//land in hand is played as its back-face land
+        // ONLY if this cast would otherwise miss a land drop it needs (still short
+        // of the spell's mv after digs and fetches); a flipped copy enters with the
+        // back face's colors/tapped and is no longer castable as a spell that game.
+        // Deliberately simple — the sim doesn't track which specific copy is being
+        // cast, so a graded backLand spell isn't excluded from flipping itself.
+        for (let b = 0; b < backs.length && lands.length < s.mv; b++) {
+          lands.push({ colors: backs[b].colors, tapped: !!backs[b].tapped });
+        }
         if (castableOnCurve(lands, s.pips, s.mv, s.hybrids)) { delay = extra; break; }
       }
       if (delay === 0) success[s.name]++;       // castable on curve

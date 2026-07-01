@@ -241,6 +241,34 @@ async function run() {
     utilPool.some((c) => c.name === "Great Hall" && c.utility));
   setLandPopularity({}); // reset so other assertions / test files aren't affected
 
+  // --- Wide-pool (4-5 color) solve time regression ---------------------------
+  // On the REAL land pool, a 4-color control requirement used to blow up branch-
+  // and-cut: 46s+ at 27 lands for the untapped objective (and 14s for taplands),
+  // freezing the browser on Recommend. The model is near-symmetric there (many
+  // interchangeable dual groups with equal coefficients), so the solver spent the
+  // whole time PROVING an optimum it had found in milliseconds. The MIP gap +
+  // positive cost shift in buildLandModel collapses that to a few hundred ms, and
+  // the 1s solver timeout backstops anything worse. Bound is generous (2s) so CI
+  // catches a genuine re-blowup without flaking on slow runners.
+  {
+    const realLands = JSON.parse(fs.readFileSync(new URL("../../data/lands.json", import.meta.url), "utf8"));
+    try {
+      const pop = JSON.parse(fs.readFileSync(new URL("../../data/land_popularity.json", import.meta.url), "utf8"));
+      if (pop && pop.lands) setLandPopularity(pop.lands); // the failing case includes popularity-admitted utility lands
+    } catch { /* snapshot optional */ }
+    const wideReq = { W: 16, U: 14, B: 11, R: 16, G: 0 }; // the 4/5C Control fixture's requirements
+    const t0 = Date.now();
+    const wide = await optimizeManabase({ requirements: wideReq, lands: realLands, landTarget: 27, objective: "untapped" });
+    const untappedMs = Date.now() - t0;
+    const t1 = Date.now();
+    const wideTaps = await optimizeManabase({ requirements: wideReq, lands: realLands, landTarget: 27, objective: "taplands" });
+    const taplandsMs = Date.now() - t1;
+    setLandPopularity({});
+    ok(`4-color untapped solve on the real pool stays fast (${untappedMs}ms < 2000ms)`, untappedMs < 2000);
+    ok(`4-color taplands solve on the real pool stays fast (${taplandsMs}ms < 2000ms)`, taplandsMs < 2000);
+    ok("4-color solve still lands a full feasible build", wide.feasible && wide.total === 27 && wideTaps.feasible && wideTaps.total === 27);
+  }
+
   console.log(`\n${passed} optimizer tests passed`);
 }
 run().catch((e) => { console.error(e); process.exit(1); });
