@@ -338,7 +338,12 @@ def slim_card(card):
 # ---------------------------------------------------------------------------
 MIN_LANDS = 200
 MIN_CARDS = 3000
-MIN_COLOR_OR_FETCH_FRACTION = 0.90
+# A land contributes mana identity through plain colors, a fetch flag, or the
+# conditional/gated color fields. Pure-colorless utility lands are a real part
+# of the pool (~15% mid-2026), so the floor guards against a parsing collapse
+# (everything colorless), not against utility lands existing.
+MANA_IDENTITY_KEYS = ("colors", "fetch", "condColors", "gatedColors")
+MIN_MANA_IDENTITY_FRACTION = 0.75
 LAND_KEYS = ("name", "type", "rarity", "colors", "image", "image_hi", "basic", "tapped")
 CARD_KEYS = ("name", "cost", "type", "image", "smooth", "fetch")
 
@@ -365,12 +370,13 @@ def validate_data(lands, cards):
             break
 
     if lands:
-        useful = sum(1 for l in lands if l.get("colors") or l.get("fetch"))
+        useful = sum(1 for l in lands
+                     if any(l.get(k) for k in MANA_IDENTITY_KEYS))
         frac = useful / len(lands)
-        if frac < MIN_COLOR_OR_FETCH_FRACTION:
+        if frac < MIN_MANA_IDENTITY_FRACTION:
             problems.append(
-                "only {:.0%} of lands have colors or a fetch flag (floor {:.0%})".format(
-                    frac, MIN_COLOR_OR_FETCH_FRACTION))
+                "only {:.0%} of lands have a mana identity (floor {:.0%})".format(
+                    frac, MIN_MANA_IDENTITY_FRACTION))
 
     if problems:
         raise SystemExit("build_data validation FAILED — not writing output:\n  "

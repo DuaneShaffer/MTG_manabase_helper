@@ -339,14 +339,27 @@ def test_validate_data_trips_on_too_few_cards():
 
 
 def test_validate_data_trips_on_colorless_land_pool():
-    # A pool where (nearly) every land parsed to no colors and no fetch flag
-    # means the color analysis broke — the 90% floor must trip.
+    # A pool where (nearly) every land parsed to no mana identity at all
+    # means the color analysis broke — the floor must trip.
     lands_out, cards_out = _plausible_snapshot()
     for land in lands_out:
         land["colors"] = []
-        land.pop("fetch", None)
-    with pytest.raises(SystemExit, match="colors"):
+        for key in ("fetch", "condColors", "gatedColors"):
+            land.pop(key, None)
+    with pytest.raises(SystemExit, match="mana identity"):
         build_data.validate_data(lands_out, cards_out)
+
+
+def test_validate_data_tolerates_utility_and_conditional_lands():
+    # ~15% pure-colorless utility lands plus conditional lands whose colors
+    # live in condColors are a normal pool shape, not a parsing failure.
+    lands_out, cards_out = _plausible_snapshot()
+    for land in lands_out[:40]:            # utility: no identity at all
+        land["colors"] = []
+    for land in lands_out[40:60]:          # conditional: identity via condColors
+        land["colors"] = []
+        land["condColors"] = ["W", "U", "B", "R", "G"]
+    build_data.validate_data(lands_out, cards_out)  # must not raise
 
 
 def test_validate_data_trips_on_missing_keys():
