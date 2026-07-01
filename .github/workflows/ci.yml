@@ -35,3 +35,12 @@ jobs:
       - name: Run JS tests
         run: |
           for f in docs/js/tests/*.test.js; do node "$f"; done
+
+      # Fixture-deck validators (scripts/*.mjs): gate the recommender and the
+      # land-count math against real meta decks. Decks that rotated out of
+      # docs/data are skipped with a warning, so a data refresh can't hard-fail
+      # this step; genuine logic/perf regressions do fail it.
+      - name: Run manabase validators
+        run: |
+          node scripts/validate_against_meta.mjs
+          node scripts/validate_recommender.mjs

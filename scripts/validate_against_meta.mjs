@@ -13,7 +13,10 @@
 //       node scripts/validate_against_meta.mjs --smooth   (which cards are flagged smooth)
 //
 // Offline except for fixtures + docs/data; no network. Refresh decks by editing
-// the fixture. This is a dev/analysis tool, not part of the app or CI.
+// the fixture. Runs in CI as a gate: exits nonzero if the app's land-count
+// targets drift outside sanity bands vs the pro builds, or recommend() leaves a
+// color short. Fixture decks that reference rotated-out cards are SKIPPED with
+// a warning (refresh the fixture), never hard-failed.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -30,7 +33,9 @@ const { COLORS } = await import(path.join(JS, "colors.js"));
 const cards = JSON.parse(fs.readFileSync(path.join(DATA, "cards.json"), "utf8"));
 const landsArr = JSON.parse(fs.readFileSync(path.join(DATA, "lands.json"), "utf8"));
 const landByName = new Map(landsArr.map((l) => [l.name.toLowerCase(), l]));
-const DECKS = JSON.parse(fs.readFileSync(path.join(ROOT, "tests/fixtures/meta_decks.json"), "utf8"));
+const decksArg = process.argv.find((a) => a.startsWith("--decks="));
+const DECKS = JSON.parse(fs.readFileSync(
+  decksArg ? path.resolve(decksArg.slice(8)) : path.join(ROOT, "tests/fixtures/meta_decks.json"), "utf8"));
 
 const SMOOTH_MAX_MV = 2; // mirror app.js
 const isLandType = (type) => (type || "").split("—")[0].includes("Land");
@@ -48,6 +53,14 @@ const padL = (s, n) => String(s).padStart(n);
 const SHOW_SMOOTH = process.argv.includes("--smooth");
 const rows = [];
 
+// Pass/fail bands (sanity gates, not exact goldens — pros disagree with any
+// formula by a land or two; these catch real drift, not taste).
+const TARGET_MIN = 15, TARGET_MAX = 32;   // sane land-count target for a 60-card deck
+const MAX_DECK_ABS_DELTA = 6;             // |actual - target| for any single deck
+const MAX_MEAN_ABS_DELTA = 3;             // mean |actual - target| across decks
+const failures = [];
+let validated = 0, skipped = 0;
+
 for (const deck of DECKS) {
   const entries = deckEntries(parseDeckText(deck.list), "deck");
   const qtyByName = {};
@@ -56,6 +69,14 @@ for (const deck of DECKS) {
 
   const resolved = cardNames(entries).map(resolve).filter(Boolean);
   const missing = cardNames(entries).filter((n) => !resolve(n));
+  // Fixture rot: the deck references cards no longer in docs/data (rotation).
+  // Skip it — that's a stale fixture, not an app bug.
+  if (missing.length) {
+    console.log(`SKIP ${deck.archetype}: not in current card data (rotation?) — ${[...new Set(missing)].join(", ")}`);
+    skipped++;
+    continue;
+  }
+  validated++;
 
   const requirements = requirementsForCards(resolved.map((c) => ({ cost: c.cost })), deckSize, null);
   const deckCards = resolved.filter((c) => !isLandType(c.type));
@@ -82,6 +103,16 @@ for (const deck of DECKS) {
   }
   const rec = recommend(requirements, landsArr, { landTarget });
   rows.push({ a: deck.archetype, avgMV, smoothCount, actual: actualLandCount, target: landTarget, targetNoDisc });
+
+  // Gates: genuine logic errors, not fixture taste.
+  if (!Object.values(requirements).some((v) => v > 0))
+    failures.push(`${deck.archetype}: no colored requirements computed for a colored deck`);
+  if (landTarget < TARGET_MIN || landTarget > TARGET_MAX)
+    failures.push(`${deck.archetype}: land target ${landTarget} outside sane band [${TARGET_MIN},${TARGET_MAX}]`);
+  if (actualLandCount && Math.abs(actualLandCount - landTarget) > MAX_DECK_ABS_DELTA)
+    failures.push(`${deck.archetype}: |actual ${actualLandCount} - target ${landTarget}| > ${MAX_DECK_ABS_DELTA}`);
+  if (Object.keys(rec.shortfall).length)
+    failures.push(`${deck.archetype}: recommend() left colors short ${JSON.stringify(rec.shortfall)} with the full land pool`);
 
   if (SHOW_SMOOTH) {
     console.log(`\n### ${deck.archetype}  — avgMV ${avgMV.toFixed(2)}`);
@@ -120,4 +151,18 @@ if (!SHOW_SMOOTH) {
   }
   console.log(`\nMean |Δ| with app's <=2MV discount: ${(sumAbs / rows.length).toFixed(2)} lands`);
   console.log(`Mean |Δ| with NO discount:          ${(sumAbsND / rows.length).toFixed(2)} lands`);
+  if (rows.length && sumAbs / rows.length > MAX_MEAN_ABS_DELTA)
+    failures.push(`mean |actual - target| ${(sumAbs / rows.length).toFixed(2)} > ${MAX_MEAN_ABS_DELTA} lands`);
 }
+
+console.log(`\n${validated} deck(s) validated, ${skipped} skipped (stale fixtures).`);
+if (!validated) {
+  console.log("WARN: every fixture deck was skipped — refresh tests/fixtures/meta_decks.json after rotation. Nothing validated; passing vacuously.");
+  process.exit(0);
+}
+if (failures.length) {
+  console.error(`FAIL validate_against_meta: ${failures.length} check(s) failed — ${failures[0]}`);
+  for (const f of failures.slice(1)) console.error(`  also: ${f}`);
+  process.exit(1);
+}
+console.log(`PASS validate_against_meta: ${validated} deck(s) within bands.`);

@@ -42,6 +42,14 @@ jobs:
         run: |
           for f in docs/js/tests/*.test.js; do node "$f"; done
 
+      # Fresh data must not ship if it breaks the recommender on real meta
+      # decks. Fixture decks the new data no longer knows (rotation) are
+      # skipped with a warning, not failed — refresh tests/fixtures then.
+      - name: Run manabase validators
+        run: |
+          node scripts/validate_against_meta.mjs
+          node scripts/validate_recommender.mjs
+
       - name: Commit and push refreshed data
         run: |
           git config user.name "github-actions[bot]"
